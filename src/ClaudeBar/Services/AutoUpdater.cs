@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -19,8 +20,23 @@ namespace ClaudeBar.Services;
 /// </summary>
 public sealed class AutoUpdater : INotifyPropertyChanged
 {
-    public const string CurrentVersion = "2.7.0";
+    /// <summary>
+    /// The running build's version — the single source of truth is the assembly stamped from the
+    /// csproj &lt;Version&gt;, so it can never drift from what publish.ps1 ships. The
+    /// AssemblyInformationalVersion can carry a "+&lt;gitsha&gt;" SourceLink suffix, which we strip
+    /// so <see cref="IsNewer"/> only ever compares the numeric semver.
+    /// </summary>
+    public static readonly string CurrentVersion = ResolveVersion();
     public const string AutoUpdateKey = "autoUpdate";
+
+    private static string ResolveVersion()
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(info)) return info.Split('+')[0];
+        var ver = asm.GetName().Version;
+        return ver is null ? "0.0.0" : $"{ver.Major}.{ver.Minor}.{ver.Build}";
+    }
 
     private const string Repo = "Alexandr-Kravchuk/claude-session-manager";
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
@@ -202,8 +218,12 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         var pid = Environment.ProcessId;
         var scriptPath = Path.Combine(Path.GetTempPath(), "claudebar-update.cmd");
 
-        // Wait for exit, then robocopy the new folder over the install dir. robocopy exit codes
-        // 0–7 are success; >=8 is a real failure, in which case we still relaunch the old exe.
+        // Wait for exit, then robocopy the new folder over the install dir. /PURGE deletes files
+        // in the install dir that the new release no longer ships (e.g. a native DLL dropped or
+        // renamed between versions), so the installed set exactly matches the release instead of
+        // accumulating stale DLLs a later build could mis-load. Our own data lives in
+        // %APPDATA%\ClaudeBar, never here, so purging the program directory is safe. robocopy exit
+        // codes 0–7 are success; >=8 is a real failure, in which case we still relaunch the old exe.
         var script = $"""
             @echo off
             :waitloop
@@ -212,7 +232,7 @@ public sealed class AutoUpdater : INotifyPropertyChanged
                 timeout /t 1 /nobreak >nul
                 goto waitloop
             )
-            robocopy "{newDir}" "{installDir}" /E /NFL /NDL /NJH /NJS /NC /NS >nul
+            robocopy "{newDir}" "{installDir}" /E /PURGE /NFL /NDL /NJH /NJS /NC /NS >nul
             start "" "{currentExe}"
             del "%~f0" >nul 2>&1
             """;

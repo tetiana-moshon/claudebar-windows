@@ -14,9 +14,6 @@ public static class ActivityHistory
     /// </summary>
     public const long MaxBytes = 1_048_576;
 
-    private static string HistoryPath =>
-        Path.Combine(AppPaths.ClaudeDir, "history.jsonl");
-
     /// <summary>
     /// Parse ~/.claude/history.jsonl into an ActivityProfile. Each line is one submitted prompt
     /// with a <c>timestamp</c> in epoch milliseconds; everything else is ignored. Pure filesystem
@@ -27,7 +24,7 @@ public static class ActivityHistory
         FileStream stream;
         try
         {
-            stream = new FileStream(HistoryPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            stream = new FileStream(AppPaths.HistoryFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         }
         catch
         {

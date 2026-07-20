@@ -52,7 +52,9 @@ public sealed class TrayIconManager : IDisposable
         menu.Items.Add("Refresh", null, async (_, _) =>
         {
             await _store.RefreshAsync(force: true);
-            await _updater.CheckForUpdatesAsync(autoInstall: true);
+            // Only surface an available update here; installing it stays an explicit choice (the
+            // Update button, or the opt-in Auto Update toggle) — a "Refresh" must never relaunch.
+            await _updater.CheckForUpdatesAsync(autoInstall: false);
         });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => System.Windows.Application.Current.Shutdown());

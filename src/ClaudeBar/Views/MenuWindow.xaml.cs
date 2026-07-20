@@ -372,7 +372,8 @@ public partial class MenuWindow : Window
         buttons.Children.Add(LinkButton("Refresh", async () =>
         {
             await _store.RefreshAsync(force: true);
-            await _updater.CheckForUpdatesAsync(autoInstall: true);
+            // Check only — installing stays explicit (Update button / Auto Update toggle).
+            await _updater.CheckForUpdatesAsync(autoInstall: false);
         }, enabled: !_store.IsLoading));
         buttons.Children.Add(SeparatorDot());
         buttons.Children.Add(LinkButton("Quit", () => Application.Current.Shutdown(), brush: SecondaryText));

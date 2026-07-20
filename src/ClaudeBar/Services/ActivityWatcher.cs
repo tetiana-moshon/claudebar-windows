@@ -13,6 +13,12 @@ public sealed class ActivityWatcher : IDisposable
     private readonly FileSystemWatcher? _watcher;
     private readonly Action _onActivity;
 
+    // FileSystemWatcher raises several events for a single logical write, and Claude Code can
+    // append many lines in quick succession. Coalesce a burst into one callback so we don't kick
+    // off a full history reparse per raw event; the timer fires once the writes go quiet.
+    private readonly System.Threading.Timer? _debounce;
+    private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(750);
+
     public ActivityWatcher(Action onActivity)
     {
         _onActivity = onActivity;
@@ -21,6 +27,8 @@ public sealed class ActivityWatcher : IDisposable
 
         try
         {
+            _debounce = new System.Threading.Timer(_ => _onActivity(), null,
+                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             _watcher = new FileSystemWatcher(dir, "history.jsonl")
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
@@ -37,10 +45,12 @@ public sealed class ActivityWatcher : IDisposable
         }
     }
 
-    private void OnChanged(object sender, FileSystemEventArgs e) => _onActivity();
+    private void OnChanged(object sender, FileSystemEventArgs e) =>
+        _debounce?.Change(DebounceDelay, Timeout.InfiniteTimeSpan);
 
     public void Dispose()
     {
+        _debounce?.Dispose();
         if (_watcher is null) return;
         _watcher.EnableRaisingEvents = false;
         _watcher.Changed -= OnChanged;
