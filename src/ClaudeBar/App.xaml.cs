@@ -8,6 +8,9 @@ namespace ClaudeBar;
 public partial class App : Application
 {
     private static System.Threading.Mutex? _singleInstanceMutex;
+    // True only for the instance that actually acquired the mutex. A second instance creates the
+    // Mutex object but never owns it, so it must NOT call ReleaseMutex (that throws).
+    private bool _ownsMutex;
 
     public UsageStore Store { get; private set; } = null!;
     public AutoUpdater Updater { get; private set; } = null!;
@@ -29,13 +32,17 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             LogCrash(args.ExceptionObject as Exception);
 
-        // Single instance: a menubar/tray app should never run twice.
+        // Single instance: a menubar/tray app should never run twice. A second launch exits
+        // immediately (its icon is already in the tray).
         _singleInstanceMutex = new System.Threading.Mutex(initiallyOwned: true, "ClaudeBar.SingleInstance", out var isNew);
         if (!isNew)
         {
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
             Shutdown();
             return;
         }
+        _ownsMutex = true;
 
         Store = new UsageStore();
         Updater = new AutoUpdater();
@@ -57,8 +64,11 @@ public partial class App : Application
     {
         _tray?.Dispose();
         Store?.Dispose();
-        _singleInstanceMutex?.ReleaseMutex();
-        _singleInstanceMutex?.Dispose();
+        if (_singleInstanceMutex is not null)
+        {
+            if (_ownsMutex) _singleInstanceMutex.ReleaseMutex();
+            _singleInstanceMutex.Dispose();
+        }
         base.OnExit(e);
     }
 }

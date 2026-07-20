@@ -21,8 +21,9 @@ $exe = Join-Path $outDir 'ClaudeBar.exe'
 if (-not (Test-Path $exe)) { throw "Expected $exe not found" }
 
 if (-not $Version) {
+    # ProductVersion can carry a "+<gitsha>" SourceLink suffix; keep just the semver.
     $Version = (Get-Item $exe).VersionInfo.ProductVersion
-    if (-not $Version) { $Version = 'dev' }
+    if ($Version) { $Version = ($Version -split '\+')[0] } else { $Version = 'dev' }
 }
 
 # WPF self-contained single-file still leaves a handful of native DLLs (wpfgfx_cor3.dll,
