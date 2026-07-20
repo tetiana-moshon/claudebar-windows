@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>ClaudeBar</AssemblyName>
+    <RootNamespace>ClaudeBar</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Version>2.7.0</Version>
+    <!-- Self-contained single-file packaging is applied only at publish time (see publish.ps1,
+         which passes -r/-p:PublishSingleFile). Keeping it out of the plain build avoids the
+         single-file apphost self-extract/relaunch behavior during development. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- WPF honors the manifest's PerMonitorV2 dpiAwareness; silence the WinForms-only analyzer
+         that wants it set via the WinForms API instead. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <!-- WinForms is used only inside TrayIconManager (which imports System.Drawing /
+       System.Windows.Forms explicitly). Dropping the global usings keeps WPF's Brush,
+       Color, Rectangle, Application, etc. unambiguous everywhere else. -->
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+</Project>

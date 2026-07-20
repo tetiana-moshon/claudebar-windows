@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+
+# Rider / VS
+.idea/
+.vs/
+
+# Publish artifacts
+publish/
+*.zip
+
+# OS
+Thumbs.db
