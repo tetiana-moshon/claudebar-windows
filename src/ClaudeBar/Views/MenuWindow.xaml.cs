@@ -334,8 +334,6 @@ public partial class MenuWindow : Window
         panel.Children.Add(Toggle("Launch at Login", _store.LaunchAtLogin, v => _store.SetLaunchAtLogin(v)));
         panel.Children.Add(Toggle("Fill bars as limit is used", Settings.GetBool("fillBarsAsUsed", false),
             v => { Settings.SetBool("fillBarsAsUsed", v); Rebuild(); }));
-        panel.Children.Add(Toggle("New pace UI", Settings.GetBool(UsageStore.NewPaceUIKey, true),
-            v => { Settings.SetBool(UsageStore.NewPaceUIKey, v); Rebuild(); }));
         panel.Children.Add(Toggle("Notify on limit alerts", Settings.GetBool(NotificationManager.EnabledKey, true),
             v => Settings.SetBool(NotificationManager.EnabledKey, v)));
         panel.Children.Add(Toggle("Auto Update", Settings.GetBool(AutoUpdater.AutoUpdateKey, true),

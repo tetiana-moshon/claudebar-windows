@@ -34,13 +34,11 @@ public sealed class Recommendation
 public sealed class Recommender
 {
     private readonly UsageSnapshot _snapshot;
-    private readonly bool _newPaceUI;
     private readonly ActivityProfile _activity;
 
-    public Recommender(UsageSnapshot snapshot, bool newPaceUI, ActivityProfile activity)
+    public Recommender(UsageSnapshot snapshot, ActivityProfile activity)
     {
         _snapshot = snapshot;
-        _newPaceUI = newPaceUI;
         _activity = activity;
     }
 
@@ -62,7 +60,7 @@ public sealed class Recommender
             .Where(u => u.HasValue).Select(u => u!.Value)
             .DefaultIfEmpty(Urgency.Low).Max();
 
-        if (_newPaceUI && urgency == Urgency.Low && _snapshot.Weekly is { } weekly &&
+        if (urgency == Urgency.Low && _snapshot.Weekly is { } weekly &&
             weekly.PaceTier(WindowKind.Weekly) == PaceTier.Idle &&
             weekly.ProjectedLeftAtReset is { } left)
         {
@@ -118,9 +116,9 @@ public sealed class Recommender
                 else if (sessionRec.Urgency == Urgency.High)
                 {
                     var s = _snapshot.Session;
-                    if (_newPaceUI && s.RemainingPercent < 5 && s.TimeUntilReset is { } resetIn)
+                    if (s.RemainingPercent < 5 && s.TimeUntilReset is { } resetIn)
                         headline = $"Session exhausted — resets in {Format.Duration(resetIn)}";
-                    else if (_newPaceUI && s.TimeToExhaustion is { } runOut &&
+                    else if (s.TimeToExhaustion is { } runOut &&
                              s.TimeUntilReset is { } resetIn2 && resetIn2 > runOut)
                         headline = $"Session runs out {Format.Duration(resetIn2 - runOut)} before reset — ease off";
                     else if (s.WaitToStabilize is { } waitStab)

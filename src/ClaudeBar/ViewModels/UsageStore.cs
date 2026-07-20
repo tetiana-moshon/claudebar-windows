@@ -68,9 +68,6 @@ public sealed class UsageStore : INotifyPropertyChanged
     private const string RateLimitedUntilKey = "rateLimitedUntil";
     private const string RateLimitStreakKey = "rateLimitStreak";
 
-    public const string NewPaceUIKey = "newPaceUI";
-    public bool NewPaceUIEnabled => Settings.GetBool(NewPaceUIKey, defaultValue: true);
-
     public UsageStore()
     {
         _notifications = new NotificationManager((t, b, c) => NotificationRequested?.Invoke(t, b, c));
@@ -346,7 +343,7 @@ public sealed class UsageStore : INotifyPropertyChanged
     // MARK: - Derived UI state
 
     public Recommendation? Recommendation =>
-        Snapshot is { } s ? new Recommender(s, NewPaceUIEnabled, Activity).Recommend() : null;
+        Snapshot is { } s ? new Recommender(s, Activity).Recommend() : null;
 
     public bool IsStale =>
         _lastUpdated is { } lu && DateTime.Now - lu > StaleThreshold;
