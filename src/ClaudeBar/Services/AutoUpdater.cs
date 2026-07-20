@@ -38,7 +38,7 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         return ver is null ? "0.0.0" : $"{ver.Major}.{ver.Minor}.{ver.Build}";
     }
 
-    private const string Repo = "Alexandr-Kravchuk/claude-session-manager";
+    private const string Repo = "tetiana-moshon/claudebar-windows";
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
