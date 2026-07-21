@@ -21,6 +21,25 @@ A Windows system-tray app that shows your Claude Code usage limits and tells you
 
 The published release is self-contained: **no .NET runtime install is required** to run it.
 
+## Quick start (after cloning)
+
+The repo ships **source only** — there is no prebuilt binary in it, so you build the app yourself.
+
+```powershell
+# 1. Make sure the prerequisites are in place
+dotnet --version   # expect 8.x or newer; if missing, install the .NET 8 SDK
+claude login       # ClaudeBar reads the token the CLI stores — without it you'll see errors
+
+# 2. If PowerShell blocks the .ps1 scripts, allow them for your user (one-time)
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+# 3. Build and launch in the system tray
+./run.ps1
+```
+
+For a standalone, self-contained `.exe` you can copy to another machine, use `./publish.ps1`
+(see below) instead of `./run.ps1`.
+
 ## Install (from source)
 
 ```powershell
