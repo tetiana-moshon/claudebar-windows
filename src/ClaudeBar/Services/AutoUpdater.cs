@@ -5,6 +5,9 @@ using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -82,7 +85,10 @@ public sealed class AutoUpdater : INotifyPropertyChanged
             var remote = release.TagName.StartsWith("v") ? release.TagName[1..] : release.TagName;
             LatestVersion = remote;
             UpdateAvailable = IsNewer(remote, CurrentVersion);
-            if (UpdateAvailable && autoInstall) await PerformUpdateAsync().ConfigureAwait(true);
+            // Automatic installs are non-interactive: they proceed ONLY if the update is
+            // cryptographically verified. An unverified update is left for the user to install
+            // explicitly via the "Update" button (which then asks for confirmation).
+            if (UpdateAvailable && autoInstall) await PerformUpdateAsync(interactive: false).ConfigureAwait(true);
         }
         catch (Exception e)
         {
@@ -94,7 +100,13 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         }
     }
 
-    public async Task PerformUpdateAsync()
+    /// <param name="interactive">
+    /// true for a user-initiated install (the "Update" button): an update that cannot be
+    /// cryptographically verified prompts for explicit confirmation before installing.
+    /// false for the automatic timer path: an unverified update is NOT installed — it is left for
+    /// the user to install explicitly, so untrusted code is never run silently.
+    /// </param>
+    public async Task PerformUpdateAsync(bool interactive = true)
     {
         if (IsUpdating) return;
         IsUpdating = true;
@@ -102,11 +114,17 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         try
         {
             var release = await FetchLatestReleaseAsync().ConfigureAwait(true);
+            var version = release.TagName.StartsWith("v") ? release.TagName[1..] : release.TagName;
             var asset = release.Assets.FirstOrDefault(a => a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
             if (asset is null) throw new Exception("No downloadable asset in release");
 
             Progress = "Downloading…";
             var zipPath = await DownloadAssetAsync(asset.BrowserDownloadUrl).ConfigureAwait(true);
+
+            // Integrity: the downloaded bytes must match the digest GitHub attests for the asset.
+            // A mismatch means the archive was corrupted or tampered in transit — a hard failure.
+            if (!VerifyDigest(zipPath, asset.Digest, out var digestStatus))
+                throw new Exception($"Integrity check failed: {digestStatus}");
 
             Progress = "Extracting…";
             var extractDir = ExtractZip(zipPath);
@@ -116,6 +134,34 @@ public sealed class AutoUpdater : INotifyPropertyChanged
             // The whole folder (exe + WPF native DLLs) is the update unit, so swap the directory
             // that contains the new exe — not just the exe.
             var newDir = System.IO.Path.GetDirectoryName(newExe)!;
+
+            // Authenticity: require a valid Authenticode signature whose publisher matches the
+            // running build's. This is what makes a silent auto-install safe against a tampered or
+            // malicious release. When it cannot be established (e.g. builds are not yet code-signed),
+            // never install silently; only proceed on explicit user confirmation.
+            var authentic = IsUpdateAuthentic(newExe, out var authStatus);
+            if (!authentic)
+            {
+                if (!interactive)
+                {
+                    // Leave UpdateAvailable set so the menu still offers a manual "Update".
+                    Progress = null;
+                    IsUpdating = false;
+                    return;
+                }
+
+                var proceed = MessageBox.Show(
+                    $"This update (v{version}) could not be automatically verified:\n\n{authStatus}\n\n" +
+                    "Install it anyway? Only continue if you trust this release.",
+                    "ClaudeBar — update not verified",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+                if (!proceed)
+                {
+                    Progress = null;
+                    IsUpdating = false;
+                    return;
+                }
+            }
 
             Progress = "Relaunching…";
             SwapAndRelaunch(newDir);
@@ -159,6 +205,9 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         {
             [JsonPropertyName("name")] public string Name { get; init; } = "";
             [JsonPropertyName("browser_download_url")] public string BrowserDownloadUrl { get; init; } = "";
+            // GitHub attaches a "sha256:<hex>" content digest to release assets; used as an integrity
+            // check on the downloaded bytes. Absent on older releases (then integrity is unverified).
+            [JsonPropertyName("digest")] public string? Digest { get; init; }
         }
     }
 
@@ -176,6 +225,11 @@ public sealed class AutoUpdater : INotifyPropertyChanged
 
     private async Task<string> DownloadAssetAsync(string url)
     {
+        // Only ever fetch the update from GitHub over HTTPS. A tampered release JSON could otherwise
+        // point browser_download_url at an arbitrary host; refuse anything off the allowlist.
+        if (!IsTrustedDownloadUrl(url))
+            throw new Exception($"Refusing to download update from untrusted URL: {url}");
+
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("User-Agent", "ClaudeBar");
         using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(true);
@@ -248,6 +302,191 @@ public sealed class AutoUpdater : INotifyPropertyChanged
         };
         Process.Start(psi);
         Application.Current.Shutdown();
+    }
+
+    // MARK: - Update verification
+
+    private static bool IsTrustedDownloadUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Compare the downloaded file's SHA-256 against the "sha256:&lt;hex&gt;" digest GitHub reports.
+    /// Returns false only on a real mismatch. When no (or an unrecognised) digest is published the
+    /// bytes can't be checked — that's not a hard failure here, because authenticity is enforced
+    /// separately by the Authenticode gate.
+    /// </summary>
+    private static bool VerifyDigest(string filePath, string? digest, out string status)
+    {
+        if (string.IsNullOrWhiteSpace(digest)) { status = "no digest published"; return true; }
+        var parts = digest.Split(':', 2);
+        if (parts.Length != 2 || !parts[0].Equals("sha256", StringComparison.OrdinalIgnoreCase))
+        {
+            status = $"unsupported digest '{digest}'";
+            return true;
+        }
+
+        using var fs = File.OpenRead(filePath);
+        var actual = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+        var expected = parts[1].Trim().ToLowerInvariant();
+        if (actual == expected) { status = "sha256 ok"; return true; }
+        status = $"sha256 mismatch (expected {Short(expected)}, got {Short(actual)})";
+        return false;
+
+        static string Short(string h) => h.Length > 12 ? h[..12] + "…" : h;
+    }
+
+    /// <summary>
+    /// The update is authentic iff the new exe carries a valid, trusted Authenticode signature whose
+    /// publisher matches the running build's. Continuity (same publisher) is what lets us trust an
+    /// automatic install without a pinned certificate. If the running build is itself unsigned there
+    /// is no publisher to match against, so authenticity cannot be established and the caller must
+    /// fall back to explicit user confirmation.
+    /// </summary>
+    private static bool IsUpdateAuthentic(string newExe, out string status)
+    {
+        var (newTrusted, newSubject) = Authenticode.Verify(newExe);
+        if (!newTrusted)
+        {
+            status = "the downloaded file has no valid, trusted Authenticode signature";
+            return false;
+        }
+
+        var currentExe = Environment.ProcessPath;
+        var (curTrusted, curSubject) = currentExe is null
+            ? (false, null)
+            : Authenticode.Verify(currentExe);
+        if (!curTrusted || curSubject is null)
+        {
+            status = $"signed by \"{newSubject}\", but the current build is unsigned — publisher continuity can't be verified";
+            return false;
+        }
+
+        if (!string.Equals(curSubject, newSubject, StringComparison.Ordinal))
+        {
+            status = $"publisher mismatch — update signed by \"{newSubject}\", current build by \"{curSubject}\"";
+            return false;
+        }
+
+        status = $"verified — signed by \"{newSubject}\"";
+        return true;
+    }
+
+    /// <summary>
+    /// Minimal Authenticode check via WinVerifyTrust: does the file have a signature that chains to a
+    /// trusted root and is otherwise valid? Also returns the signer's certificate subject.
+    /// </summary>
+    private static class Authenticode
+    {
+        public static (bool trusted, string? subject) Verify(string path)
+        {
+            var trusted = IsTrusted(path);
+            string? subject = null;
+            if (trusted)
+            {
+                try { subject = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)).Subject; }
+                catch { /* trusted but subject unreadable — leave null */ }
+            }
+            return (trusted, subject);
+        }
+
+        private static bool IsTrusted(string path)
+        {
+            var fileInfo = new WINTRUST_FILE_INFO
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_FILE_INFO>(),
+                pcwszFilePath = path,
+                hFile = IntPtr.Zero,
+                pgKnownSubject = IntPtr.Zero,
+            };
+            var pFile = Marshal.AllocHGlobal(Marshal.SizeOf<WINTRUST_FILE_INFO>());
+            var pData = IntPtr.Zero;
+            try
+            {
+                Marshal.StructureToPtr(fileInfo, pFile, false);
+                var data = new WINTRUST_DATA
+                {
+                    cbStruct = (uint)Marshal.SizeOf<WINTRUST_DATA>(),
+                    pPolicyCallbackData = IntPtr.Zero,
+                    pSIPClientData = IntPtr.Zero,
+                    dwUIChoice = WTD_UI_NONE,
+                    fdwRevocationChecks = WTD_REVOKE_NONE,
+                    dwUnionChoice = WTD_CHOICE_FILE,
+                    pInfoUnion = pFile,
+                    dwStateAction = WTD_STATEACTION_VERIFY,
+                    hWVTStateData = IntPtr.Zero,
+                    pwszURLReference = IntPtr.Zero,
+                    dwProvFlags = WTD_SAFER_FLAG,
+                    dwUIContext = 0,
+                    pSignatureSettings = IntPtr.Zero,
+                };
+                pData = Marshal.AllocHGlobal(Marshal.SizeOf<WINTRUST_DATA>());
+                Marshal.StructureToPtr(data, pData, false);
+
+                int result;
+                try { result = WinVerifyTrust(IntPtr.Zero, WINTRUST_ACTION_GENERIC_VERIFY_V2, pData); }
+                finally
+                {
+                    // Always release WinVerifyTrust's state, whatever the verdict.
+                    data.dwStateAction = WTD_STATEACTION_CLOSE;
+                    Marshal.StructureToPtr(data, pData, true);
+                    WinVerifyTrust(IntPtr.Zero, WINTRUST_ACTION_GENERIC_VERIFY_V2, pData);
+                }
+                return result == 0; // ERROR_SUCCESS — signed, valid, and trusted
+            }
+            catch (DllNotFoundException)
+            {
+                return false; // no wintrust.dll (non-Windows) — treat as unverifiable
+            }
+            finally
+            {
+                Marshal.DestroyStructure<WINTRUST_FILE_INFO>(pFile);
+                Marshal.FreeHGlobal(pFile);
+                if (pData != IntPtr.Zero) Marshal.FreeHGlobal(pData);
+            }
+        }
+
+        private static readonly Guid WINTRUST_ACTION_GENERIC_VERIFY_V2 =
+            new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+        private const uint WTD_UI_NONE = 2;
+        private const uint WTD_REVOKE_NONE = 0;
+        private const uint WTD_CHOICE_FILE = 1;
+        private const uint WTD_STATEACTION_VERIFY = 1;
+        private const uint WTD_STATEACTION_CLOSE = 2;
+        private const uint WTD_SAFER_FLAG = 0x100;
+
+        [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid pgActionID, IntPtr pWVTData);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WINTRUST_FILE_INFO
+        {
+            public uint cbStruct;
+            [MarshalAs(UnmanagedType.LPWStr)] public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINTRUST_DATA
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pInfoUnion;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+            public IntPtr pSignatureSettings;
+        }
     }
 
     // MARK: - Version comparison
