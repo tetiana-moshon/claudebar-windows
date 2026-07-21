@@ -25,7 +25,17 @@ public sealed class UsageStore : INotifyPropertyChanged
     public UsageSnapshot? Snapshot { get => _snapshot; private set { _snapshot = value; RaiseAll(); } }
 
     private string? _errorMessage;
-    public string? ErrorMessage { get => _errorMessage; private set { _errorMessage = value; RaiseAll(); } }
+    // While a rate-limit window is active the message is derived live from _rateLimitedUntil, so the
+    // 30s UI tick renders a real countdown instead of a value frozen at the moment of the 429. The
+    // stored _errorMessage is the fallback for every other (genuinely static) error and for the brief
+    // gap between the window elapsing and the scheduled retry firing.
+    public string? ErrorMessage
+    {
+        get => _rateLimitedUntil is { } until && until > DateTime.Now
+            ? RateLimitedMessage((until - DateTime.Now).TotalSeconds)
+            : _errorMessage;
+        private set { _errorMessage = value; RaiseAll(); }
+    }
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set { _isLoading = value; RaiseAll(); } }
@@ -75,9 +85,13 @@ public sealed class UsageStore : INotifyPropertyChanged
         LoadPersistedRateLimit();
         ReloadActivity();
 
-        // Skip the startup probe while a persisted backoff window is still active.
+        // Skip the startup probe while a persisted backoff window is still active, but schedule the
+        // automatic retry so the state clears itself the moment the window elapses.
         if (_rateLimitedUntil is { } until && until > DateTime.Now)
+        {
             ErrorMessage = RateLimitedMessage((until - DateTime.Now).TotalSeconds);
+            ScheduleRateLimitRetry();
+        }
         else
             _ = RefreshAsync();
 
@@ -167,6 +181,7 @@ public sealed class UsageStore : INotifyPropertyChanged
                 PersistRateLimit();
                 ErrorMessage = RateLimitedMessage(backoff);
             }
+            ScheduleRateLimitRetry();
         }
         catch (ApiException ex) when (ex.Kind == ApiErrorKind.TokenExpired)
         {
@@ -269,14 +284,15 @@ public sealed class UsageStore : INotifyPropertyChanged
         throw authError;
     }
 
-    private void ScheduleRetry()
+    private void ScheduleRetry(TimeSpan? delay = null)
     {
         if (_retryCts is not null) return;
         _retryCts = new CancellationTokenSource();
         var token = _retryCts.Token;
+        var wait = delay ?? TimeSpan.FromSeconds(60);
         _ = Task.Run(async () =>
         {
-            try { await Task.Delay(TimeSpan.FromSeconds(60), token).ConfigureAwait(false); }
+            try { await Task.Delay(wait, token).ConfigureAwait(false); }
             catch { return; }
             await _dispatcher.InvokeAsync(async () =>
             {
@@ -284,6 +300,19 @@ public sealed class UsageStore : INotifyPropertyChanged
                 await RefreshAsync();
             });
         });
+    }
+
+    /// <summary>
+    /// Schedule the automatic re-fetch for the moment the backoff window elapses (plus a small
+    /// buffer). Without this the rate-limit state would only clear on the 5-minute timer or on user
+    /// activity, leaving the countdown stuck at "0m" long after the window actually expired.
+    /// </summary>
+    private void ScheduleRateLimitRetry()
+    {
+        if (_rateLimitedUntil is not { } until) return;
+        var delay = until - DateTime.Now;
+        if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
+        ScheduleRetry(delay + TimeSpan.FromSeconds(2));
     }
 
     private void ScheduleTimer()
