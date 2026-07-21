@@ -330,7 +330,7 @@ public sealed class UsageStore : INotifyPropertyChanged
         _uiTick.Start();
     }
 
-    private static double RateLimitBackoff(int streak)
+    internal static double RateLimitBackoff(int streak)
     {
         var multiplier = (double)(1 << Math.Max(streak - 1, 0));
         return Math.Min(RateLimitBackoffBase * multiplier, RateLimitBackoffCap);

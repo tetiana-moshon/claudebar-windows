@@ -306,7 +306,7 @@ public sealed class AutoUpdater : INotifyPropertyChanged
 
     // MARK: - Update verification
 
-    private static bool IsTrustedDownloadUrl(string url) =>
+    internal static bool IsTrustedDownloadUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == Uri.UriSchemeHttps &&
         (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
@@ -319,7 +319,7 @@ public sealed class AutoUpdater : INotifyPropertyChanged
     /// bytes can't be checked — that's not a hard failure here, because authenticity is enforced
     /// separately by the Authenticode gate.
     /// </summary>
-    private static bool VerifyDigest(string filePath, string? digest, out string status)
+    internal static bool VerifyDigest(string filePath, string? digest, out string status)
     {
         if (string.IsNullOrWhiteSpace(digest)) { status = "no digest published"; return true; }
         var parts = digest.Split(':', 2);

@@ -29,4 +29,10 @@
     <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
+  <!-- Expose internal (otherwise-private) helpers to the unit-test assembly so security- and
+       logic-critical methods can be tested without widening their public surface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClaudeBar.Tests" />
+  </ItemGroup>
+
 </Project>
