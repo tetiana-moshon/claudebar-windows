@@ -30,7 +30,7 @@ namespace ClaudeBar.Services;
 /// </summary>
 public static class DesktopTokenReader
 {
-    private const string ClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+    internal const string ClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
     /// <summary>
     /// The desktop app has been observed migrating its live tokens from <c>oauth:tokenCache</c>
@@ -48,8 +48,20 @@ public static class DesktopTokenReader
     {
         var cache = DecryptedTokenCache();
         if (cache is null) return Array.Empty<string>();
+        return SelectUsableTokens(cache, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    }
 
-        var nowMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    /// <summary>
+    /// The token-selection logic, split out from the decryption so it can be tested directly:
+    /// keep client-9d1c250a <c>user:inference</c> entries that carry a non-empty, still-valid token
+    /// (exp unknown = 0 is treated as usable — the server is the final authority via a 401), and
+    /// order by latest expiry, since a later-expiring token is the more likely to still be live.
+    /// We deliberately do NOT prefer the claude_code session scope — that is exactly the token a
+    /// re-login revokes first, while a broader token the desktop keeps refreshing still returns 200.
+    /// </summary>
+    internal static IReadOnlyList<string> SelectUsableTokens(
+        IReadOnlyDictionary<string, JsonElement> cache, long nowMillis)
+    {
         var candidates = new List<(string token, double exp)>();
 
         foreach (var (key, value) in cache)
@@ -69,11 +81,6 @@ public static class DesktopTokenReader
             candidates.Add((token, exp));
         }
 
-        // Keep only tokens we believe are still valid (exp unknown = 0 is treated as usable; the
-        // server is the final authority via a 401). Order by latest expiry: a later-expiring token
-        // is the more likely to still be live on the server. We deliberately do NOT prefer the
-        // claude_code session scope — that is exactly the token a re-login revokes first, while a
-        // broader token the desktop keeps refreshing still returns 200.
         return candidates
             .Where(c => c.exp == 0 || c.exp > nowMillis)
             .OrderByDescending(c => c.exp)
