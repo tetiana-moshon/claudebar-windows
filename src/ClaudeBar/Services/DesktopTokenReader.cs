@@ -10,7 +10,7 @@ namespace ClaudeBar.Services;
 /// ClaudeBar never has to refresh the (aggressively rate-limited) OAuth token endpoint itself —
 /// the source of the old daily-429 lockups.
 ///
-/// The desktop app (Electron) caches its tokens in <c>%APPDATA%\Claude\config.json</c> under the
+/// The desktop app (Electron) caches its tokens in <c>config.json</c> under the
 /// keys <c>oauth:tokenCache</c> and <c>oauth:tokenCacheV2</c> (both are read and merged — the
 /// desktop app has been observed moving which key holds the live client-9d1c250a entry across
 /// releases), each a Chromium <c>os_crypt</c> "v10" blob.
@@ -20,6 +20,9 @@ namespace ClaudeBar.Services;
 /// "DPAPI" prefix — in <c>%APPDATA%\Claude\Local State</c> under <c>os_crypt.encrypted_key</c>.
 /// (This differs from macOS, where the key is PBKDF2-derived from a keychain secret and the
 /// cipher is AES-128-CBC with a fixed IV.)
+///
+/// config.json and "Local State" live in whichever directory <see cref="AppPaths.DesktopDirCandidates"/>
+/// resolves — the classic <c>%APPDATA%\Claude</c> or the Store/MSIX package container.
 ///
 /// The decrypted JSON is keyed <c>"&lt;clientId&gt;:&lt;org&gt;:&lt;audience&gt;:&lt;scopes&gt;"</c>
 /// → <c>{ token, refreshToken, expiresAt, … }</c>. The desktop app caches several tokens for
@@ -46,9 +49,17 @@ public static class DesktopTokenReader
     /// </summary>
     public static IReadOnlyList<string> CurrentTokens()
     {
-        var cache = DecryptedTokenCache();
-        if (cache is null) return Array.Empty<string>();
-        return SelectUsableTokens(cache, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // Probe every install shape (classic + Store/MSIX) and merge their caches; realistically
+        // only one exists, but merging lets SelectUsableTokens pick the freshest token across all.
+        var merged = new Dictionary<string, JsonElement>();
+        foreach (var dir in AppPaths.DesktopDirCandidates())
+        {
+            var cache = DecryptedTokenCache(dir);
+            if (cache is null) continue;
+            foreach (var (name, value) in cache) merged[name] = value;
+        }
+        if (merged.Count == 0) return Array.Empty<string>();
+        return SelectUsableTokens(merged, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
     /// <summary>
@@ -88,15 +99,15 @@ public static class DesktopTokenReader
             .ToArray();
     }
 
-    private static Dictionary<string, JsonElement>? DecryptedTokenCache()
+    private static Dictionary<string, JsonElement>? DecryptedTokenCache(string dir)
     {
-        var key = DeriveKey();
+        var key = DeriveKey(dir);
         if (key is null) return null;
 
         JsonDocument root;
         try
         {
-            root = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopConfigFile));
+            root = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopConfigFile(dir)));
         }
         catch
         {
@@ -143,11 +154,11 @@ public static class DesktopTokenReader
     /// The AES-256 key: read <c>os_crypt.encrypted_key</c> from Local State, base64-decode, strip
     /// the 5-byte "DPAPI" prefix, and DPAPI-unprotect it for the current user.
     /// </summary>
-    private static byte[]? DeriveKey()
+    private static byte[]? DeriveKey(string dir)
     {
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopLocalStateFile));
+            using var doc = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopLocalStateFile(dir)));
             if (!doc.RootElement.TryGetProperty("os_crypt", out var osCrypt) ||
                 !osCrypt.TryGetProperty("encrypted_key", out var keyEl) ||
                 keyEl.ValueKind != JsonValueKind.String)
