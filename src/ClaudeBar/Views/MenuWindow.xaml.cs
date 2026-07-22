@@ -22,6 +22,10 @@ public partial class MenuWindow : Window
     private static readonly Brush SecondaryText = Freeze(0x9A, 0x9A, 0xA0);
     private static readonly Brush TrackFill = Freeze(0xFF, 0xFF, 0xFF, 0x20);
     private static readonly Brush DividerBrush = Freeze(0xFF, 0xFF, 0xFF, 0x1A);
+    // Cool neutral for the "used" fill: bright enough to read clearly against the faint track, but
+    // kept below full opacity so the saturated tier colors (orange/blue/red) stay the loudest
+    // element on the bar — used = visible-but-secondary "past", color = the pace signal.
+    private static readonly Brush UsedFill = Freeze(0xC0, 0xC0, 0xCA, 0x99);
 
     private readonly UsageStore _store;
     private readonly AutoUpdater _updater;
@@ -238,7 +242,7 @@ public partial class MenuWindow : Window
             var band = BandColor(tier, window, kind);
 
             var baseWidth = W * (band == null ? fillEdge : lower) / 100;
-            var baseBrush = overshoot && !_fillBars ? Tint(UiTheme.Red, 0.35) : Freeze(0x9A, 0x9A, 0xA0, 0x73);
+            var baseBrush = overshoot && !_fillBars ? Tint(UiTheme.Red, 0.35) : UsedFill;
             canvas.Children.Add(Bar(0, barY, baseWidth, barH, baseBrush));
 
             if (band is not null && upper > lower)
@@ -262,7 +266,7 @@ public partial class MenuWindow : Window
         }
         else
         {
-            canvas.Children.Add(Bar(0, barY, W * fillEdge / 100, barH, Freeze(0x9A, 0x9A, 0xA0, 0x73)));
+            canvas.Children.Add(Bar(0, barY, W * fillEdge / 100, barH, UsedFill));
         }
 
         return canvas;
