@@ -52,12 +52,7 @@ public partial class App : Application
     private static void LogCrash(Exception? ex)
     {
         if (ex is null) return;
-        try
-        {
-            var path = System.IO.Path.Combine(Services.AppPaths.DataDir, "error.log");
-            System.IO.File.AppendAllText(path, $"[{DateTime.Now:o}] {ex}\n\n");
-        }
-        catch { /* nothing more we can do */ }
+        Services.Log.Error("Unhandled exception", ex);
     }
 
     protected override void OnExit(ExitEventArgs e)
