@@ -62,6 +62,31 @@ public class UsageSnapshotTests
         Assert.Equal("Opus", snap.ScopedModelName);
     }
 
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(null)]
+    public void From_drops_a_scoped_limit_with_no_usage(double? percent)
+    {
+        // A 0% (or absent-percent) weekly_scoped entry is a metered-but-unused model — nothing to
+        // show — so the window and its model name are suppressed until real usage lands.
+        var snap = UsageSnapshot.From(new OAuthUsageResponse
+        {
+            FiveHour = Win(10),
+            Limits = new List<OAuthLimit>
+            {
+                new()
+                {
+                    Kind = "weekly_scoped",
+                    Percent = percent,
+                    ResetsAt = "2999-01-01T00:00:00Z",
+                    Scope = new OAuthScope { Model = new OAuthModel { DisplayName = "Fable" } }
+                }
+            }
+        });
+        Assert.Null(snap!.ScopedWeekly);
+        Assert.Null(snap.ScopedModelName);
+    }
+
     [Fact]
     public void From_ignores_limits_that_are_not_weekly_scoped()
     {
