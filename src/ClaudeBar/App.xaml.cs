@@ -50,6 +50,10 @@ public partial class App : Application
         LimitAlerts = new LimitAlertPresenter();
         Store.LimitAlertRequested += LimitAlerts.Evaluate;
         _tray = new TrayIconManager(Store, Updater);
+
+        // Start the first fetch only after every subscriber above is wired, so the initial
+        // evaluation can never fire before the limit-alert presenter is listening.
+        Store.Start();
     }
 
     private static void LogCrash(Exception? ex)

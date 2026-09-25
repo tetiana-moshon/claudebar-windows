@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using ClaudeBar.Models;
 using ClaudeBar.Services;
 
@@ -13,9 +12,6 @@ namespace ClaudeBar.Views;
 /// </summary>
 public partial class LimitAlertWindow : Window
 {
-    private static readonly Brush Primary = Freeze(0xF2, 0xF2, 0xF7);
-    private static readonly Brush Secondary = Freeze(0x9A, 0x9A, 0xA0);
-
     private readonly Action _onDismiss;
     private readonly Action _onSnooze;
 
@@ -32,7 +28,7 @@ public partial class LimitAlertWindow : Window
     {
         // Matches the codebase-wide "exhausted" cutoff so the dialog's red/orange split never
         // disagrees with what the menu bar shows for the same number.
-        var isCritical = entries.Any(e => e.Window.RemainingPercent < 5);
+        var isCritical = entries.Any(e => e.Window.RemainingPercent < LimitAlert.WeeklyThreshold);
 
         ContentHost.Children.Clear();
 
@@ -47,8 +43,8 @@ public partial class LimitAlertWindow : Window
         });
         header.Children.Add(new TextBlock
         {
-            Text = entries.Count > 1 ? "Limits almost gone" : $"{entries[0].Title} almost gone",
-            FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Primary,
+            Text = entries.Count == 1 ? $"{entries[0].Title} almost gone" : "Limits almost gone",
+            FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = UiTheme.PrimaryText,
             VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 290
         });
         ContentHost.Children.Add(header);
@@ -56,8 +52,8 @@ public partial class LimitAlertWindow : Window
         foreach (var entry in entries)
         {
             var row = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-            row.Children.Add(new TextBlock { Text = entry.Title, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = Primary });
-            row.Children.Add(new TextBlock { Text = DetailLine(entry.Window), FontSize = 11, Foreground = Secondary, TextWrapping = TextWrapping.Wrap });
+            row.Children.Add(new TextBlock { Text = entry.Title, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = UiTheme.PrimaryText });
+            row.Children.Add(new TextBlock { Text = DetailLine(entry.Window), FontSize = 11, Foreground = UiTheme.SecondaryText, TextWrapping = TextWrapping.Wrap });
             ContentHost.Children.Add(row);
         }
 
@@ -85,12 +81,5 @@ public partial class LimitAlertWindow : Window
         if (window.TimeUntilReset is { } resetIn) parts.Add($"resets in {Format.Duration(resetIn)}");
         if (window.TimeToExhaustion is { } exhaustion) parts.Add($"at this rate: ~{Format.Duration(exhaustion)} left");
         return string.Join(" · ", parts);
-    }
-
-    private static SolidColorBrush Freeze(byte r, byte g, byte b, byte a = 0xFF)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
     }
 }

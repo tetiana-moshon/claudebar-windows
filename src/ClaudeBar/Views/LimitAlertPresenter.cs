@@ -15,6 +15,10 @@ public sealed class LimitAlertPresenter
 {
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
     private LimitAlertWindow? _window;
+    // The set currently on screen — the single source of truth for the snooze action. Refreshed on
+    // every Show so "Remind in 15 min" snoozes what the user is actually looking at, not the scopes
+    // captured when the dialog first opened (later SetEntries refreshes never rebind the closure).
+    private IReadOnlyList<LimitAlertEntry> _currentEntries = Array.Empty<LimitAlertEntry>();
 
     /// <summary>Called after every snapshot refresh. Decides whether to show, refresh, or close.</summary>
     public void Evaluate(UsageSnapshot snapshot)
@@ -48,9 +52,10 @@ public sealed class LimitAlertPresenter
 
     private void Show(IReadOnlyList<LimitAlertEntry> entries, bool stealFocus)
     {
+        _currentEntries = entries;
         if (_window is null)
         {
-            _window = new LimitAlertWindow(entries, onDismiss: Close, onSnooze: () => Snooze(entries));
+            _window = new LimitAlertWindow(entries, onDismiss: Close, onSnooze: Snooze);
             _window.Closed += (_, _) => _window = null; // titlebar close clears the reference too
             _window.Show();
         }
@@ -64,10 +69,10 @@ public sealed class LimitAlertPresenter
         _window.Activate();
     }
 
-    private void Snooze(IReadOnlyList<LimitAlertEntry> entries)
+    private void Snooze()
     {
         var until = DateTime.Now.AddMinutes(15);
-        foreach (var entry in entries) LimitAlert.Suppress(entry.Scope, until);
+        foreach (var entry in _currentEntries) LimitAlert.Suppress(entry.Scope, until);
         Close();
     }
 

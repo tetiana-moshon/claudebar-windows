@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using ClaudeBar.Services;
 using ClaudeBar.ViewModels;
 
@@ -13,9 +12,6 @@ namespace ClaudeBar.Views;
 /// </summary>
 public partial class PreferencesWindow : Window
 {
-    private static readonly Brush Primary = Freeze(0xF2, 0xF2, 0xF7);
-    private static readonly Brush Secondary = Freeze(0x9A, 0x9A, 0xA0);
-
     private readonly UsageStore _store;
     private readonly AutoUpdater _updater;
 
@@ -71,7 +67,7 @@ public partial class PreferencesWindow : Window
     private UIElement SectionHeader(string title) =>
         new TextBlock
         {
-            Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Secondary,
+            Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = UiTheme.SecondaryText,
             Margin = new Thickness(0, 14, 0, 6)
         };
 
@@ -80,9 +76,9 @@ public partial class PreferencesWindow : Window
         var panel = new StackPanel { Margin = new Thickness(0, 2, 0, 2) };
         var cb = new CheckBox
         {
-            Content = new TextBlock { Text = label, FontSize = 12, Foreground = Primary },
+            Content = new TextBlock { Text = label, FontSize = 12, Foreground = UiTheme.PrimaryText },
             IsChecked = value,
-            Foreground = Primary
+            Foreground = UiTheme.PrimaryText
         };
         cb.Checked += (_, _) => onChange(true);
         cb.Unchecked += (_, _) => onChange(false);
@@ -90,7 +86,7 @@ public partial class PreferencesWindow : Window
         if (caption is not null)
             panel.Children.Add(new TextBlock
             {
-                Text = caption, FontSize = 10, Foreground = Secondary,
+                Text = caption, FontSize = 10, Foreground = UiTheme.SecondaryText,
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(20, 1, 0, 0)
             });
         return panel;
@@ -104,7 +100,7 @@ public partial class PreferencesWindow : Window
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var lbl = new TextBlock { Text = label, FontSize = 12, Foreground = Primary, VerticalAlignment = VerticalAlignment.Center };
+        var lbl = new TextBlock { Text = label, FontSize = 12, Foreground = UiTheme.PrimaryText, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(lbl, 0);
         grid.Children.Add(lbl);
 
@@ -127,7 +123,7 @@ public partial class PreferencesWindow : Window
         if (caption is not null)
             panel.Children.Add(new TextBlock
             {
-                Text = caption, FontSize = 10, Foreground = Secondary,
+                Text = caption, FontSize = 10, Foreground = UiTheme.SecondaryText,
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 0)
             });
         return panel;
@@ -148,12 +144,5 @@ public partial class PreferencesWindow : Window
             if (distance < bestDistance) { best = i; bestDistance = distance; }
         }
         return best;
-    }
-
-    private static SolidColorBrush Freeze(byte r, byte g, byte b, byte a = 0xFF)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
     }
 }

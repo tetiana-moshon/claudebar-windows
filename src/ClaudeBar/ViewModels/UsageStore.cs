@@ -118,16 +118,6 @@ public sealed class UsageStore : INotifyPropertyChanged
         LoadPersistedRateLimit();
         ReloadActivity();
 
-        // Skip the startup probe while a persisted backoff window is still active, but schedule the
-        // automatic retry so the state clears itself the moment the window elapses.
-        if (_rateLimitedUntil is { } until && until > DateTime.Now)
-        {
-            ErrorMessage = RateLimitedMessage((until - DateTime.Now).TotalSeconds);
-            ScheduleRateLimitRetry();
-        }
-        else
-            _ = RefreshAsync();
-
         ScheduleTimer();
         ScheduleUiTick();
 
@@ -141,6 +131,25 @@ public sealed class UsageStore : INotifyPropertyChanged
                 await RefreshOnActivityAsync();
             });
         });
+    }
+
+    /// <summary>
+    /// Kick off the first usage fetch. Deliberately separate from the constructor so the host can wire
+    /// up event subscribers (notably the limit-alert presenter's <c>LimitAlertRequested</c> handler)
+    /// before the initial refresh can raise them — otherwise a fast or cached fetch path could complete
+    /// before anyone is listening and the first evaluation would be lost.
+    /// </summary>
+    public void Start()
+    {
+        // Skip the startup probe while a persisted backoff window is still active, but schedule the
+        // automatic retry so the state clears itself the moment the window elapses.
+        if (_rateLimitedUntil is { } until && until > DateTime.Now)
+        {
+            ErrorMessage = RateLimitedMessage((until - DateTime.Now).TotalSeconds);
+            ScheduleRateLimitRetry();
+        }
+        else
+            _ = RefreshAsync();
     }
 
     /// <summary>Re-derive the active-hours profile from history.jsonl off the UI thread.</summary>
