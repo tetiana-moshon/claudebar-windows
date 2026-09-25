@@ -14,6 +14,7 @@ public partial class App : Application
 
     public UsageStore Store { get; private set; } = null!;
     public AutoUpdater Updater { get; private set; } = null!;
+    public LimitAlertPresenter LimitAlerts { get; private set; } = null!;
     private TrayIconManager? _tray;
 
     public static new App Current => (App)Application.Current;
@@ -46,6 +47,8 @@ public partial class App : Application
 
         Store = new UsageStore();
         Updater = new AutoUpdater();
+        LimitAlerts = new LimitAlertPresenter();
+        Store.LimitAlertRequested += LimitAlerts.Evaluate;
         _tray = new TrayIconManager(Store, Updater);
     }
 

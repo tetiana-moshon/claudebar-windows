@@ -21,6 +21,9 @@ public sealed class UsageStore : INotifyPropertyChanged
     /// <summary>Raised when a limit banner should be shown: (title, body, isCritical).</summary>
     public event Action<string, string, bool>? NotificationRequested;
 
+    /// <summary>Raised with each fresh snapshot so the focus-stealing limit dialog can evaluate it.</summary>
+    public event Action<UsageSnapshot>? LimitAlertRequested;
+
     private UsageSnapshot? _snapshot;
     public UsageSnapshot? Snapshot { get => _snapshot; private set { _snapshot = value; RaiseAll(); } }
 
@@ -88,9 +91,29 @@ public sealed class UsageStore : INotifyPropertyChanged
     private static int PollIntervalSeconds() =>
         ClampPollSeconds(Settings.GetInt(PollIntervalKey, DefaultPollSeconds));
 
+    /// <summary>
+    /// Verification mode (mirrors the macOS CLAUDEBAR_FAKE_LIMIT hook): when the environment variable
+    /// is set, every fetched snapshot's session window is forced to nearly-exhausted so the limit
+    /// dialog can be eyeballed without actually running a quota down. Off unless the variable is set.
+    /// </summary>
+    private static readonly bool FakeLimit =
+        Environment.GetEnvironmentVariable("CLAUDEBAR_FAKE_LIMIT") is { Length: > 0 };
+
+    private static UsageSnapshot ApplyFakeLimit(UsageSnapshot snap)
+    {
+        if (!FakeLimit) return snap;
+        // Force the session to ~3% left, resetting in 2h (clear of the imminent-reset carve-out).
+        var session = new RateWindow(usedPercent: 97, windowDuration: TimeSpan.FromHours(5),
+            resetsAt: DateTime.Now.AddHours(2));
+        return new UsageSnapshot(session, snap.Weekly, snap.ScopedWeekly, snap.ScopedModelName);
+    }
+
     public UsageStore()
     {
         _notifications = new NotificationManager((t, b, c) => NotificationRequested?.Invoke(t, b, c));
+
+        // A leftover snooze from a previous fake-limit run would otherwise swallow the forced alert.
+        if (FakeLimit) LimitAlert.ClearSuppression(LimitScope.Session);
 
         LoadPersistedRateLimit();
         ReloadActivity();
@@ -161,11 +184,13 @@ public sealed class UsageStore : INotifyPropertyChanged
             var snap = UsageSnapshot.From(response);
             if (snap is not null)
             {
+                snap = ApplyFakeLimit(snap);
                 Snapshot = snap;
                 LastUpdated = DateTime.Now;
                 ErrorMessage = null;
                 History.Record(snap);
                 _notifications.Evaluate(Recommendation);
+                LimitAlertRequested?.Invoke(snap);
             }
             else
             {

@@ -49,6 +49,9 @@ public partial class PreferencesWindow : Window
             (int)NotificationManager.Threshold,
             v => Settings.SetInt(NotificationManager.ThresholdKey, v),
             "The lowest urgency that shows a toast."));
+        ContentHost.Children.Add(Toggle("Pop-up alert when a limit is nearly gone", Settings.GetBool(LimitAlert.EnabledKey, true),
+            v => { Settings.SetBool(LimitAlert.EnabledKey, v); ((App)Application.Current).LimitAlerts.SettingChanged(v); },
+            "A focus-stealing window for a genuinely critical limit (session under 10%, weekly under 5%) — harder to miss than a toast."));
 
         ContentHost.Children.Add(SectionHeader("Usage polling"));
         ContentHost.Children.Add(Dropdown("Check every",
