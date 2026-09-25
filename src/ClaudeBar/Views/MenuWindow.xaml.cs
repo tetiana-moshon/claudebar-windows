@@ -30,13 +30,15 @@ public partial class MenuWindow : Window
     private readonly UsageStore _store;
     private readonly AutoUpdater _updater;
     private readonly Action _showStatistics;
+    private readonly Action _showPreferences;
 
-    public MenuWindow(UsageStore store, AutoUpdater updater, Action showStatistics)
+    public MenuWindow(UsageStore store, AutoUpdater updater, Action showStatistics, Action showPreferences)
     {
         InitializeComponent();
         _store = store;
         _updater = updater;
         _showStatistics = showStatistics;
+        _showPreferences = showPreferences;
 
         _store.PropertyChanged += OnChanged;
         _updater.PropertyChanged += OnChanged;
@@ -335,20 +337,6 @@ public partial class MenuWindow : Window
     {
         var panel = new StackPanel { Margin = new Thickness(14, 8, 14, 8) };
 
-        panel.Children.Add(Toggle("Launch at Login", _store.LaunchAtLogin, v => _store.SetLaunchAtLogin(v)));
-        panel.Children.Add(Toggle("Fill bars as limit is used", Settings.GetBool("fillBarsAsUsed", false),
-            v => { Settings.SetBool("fillBarsAsUsed", v); Rebuild(); }));
-        panel.Children.Add(Toggle("Notify on limit alerts", Settings.GetBool(NotificationManager.EnabledKey, true),
-            v => Settings.SetBool(NotificationManager.EnabledKey, v)));
-        panel.Children.Add(Toggle("Auto Update", Settings.GetBool(AutoUpdater.AutoUpdateKey, true),
-            v =>
-            {
-                Settings.SetBool(AutoUpdater.AutoUpdateKey, v);
-                if (v) _updater.StartPeriodicCheck(); else _updater.StopPeriodicCheck();
-            }));
-
-        panel.Children.Add(Divider(new Thickness(0, 6, 0, 6)));
-
         if (BuildUpdateSection() is { } update)
         {
             panel.Children.Add(update);
@@ -370,6 +358,8 @@ public partial class MenuWindow : Window
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttons.Children.Add(LinkButton("Statistics", () => _showStatistics()));
+        buttons.Children.Add(SeparatorDot());
+        buttons.Children.Add(LinkButton("Settings", () => _showPreferences()));
         buttons.Children.Add(SeparatorDot());
         buttons.Children.Add(LinkButton("Refresh", async () =>
         {
@@ -422,20 +412,6 @@ public partial class MenuWindow : Window
         Text("Fetching data…", 12, FontWeights.Normal, SecondaryText, margin: new Thickness(16, 16, 16, 16));
 
     // MARK: - Element helpers
-
-    private UIElement Toggle(string label, bool value, Action<bool> onChange)
-    {
-        var cb = new CheckBox
-        {
-            Content = new TextBlock { Text = label, FontSize = 11, Foreground = Primary },
-            IsChecked = value,
-            Margin = new Thickness(0, 3, 0, 3),
-            Foreground = Primary
-        };
-        cb.Checked += (_, _) => onChange(true);
-        cb.Unchecked += (_, _) => onChange(false);
-        return cb;
-    }
 
     private UIElement LinkButton(string label, Action onClick, bool enabled = true, Brush? brush = null)
     {

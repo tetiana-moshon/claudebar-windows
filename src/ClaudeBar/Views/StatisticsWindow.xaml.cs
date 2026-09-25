@@ -117,7 +117,7 @@ public partial class StatisticsWindow : Window
             ContentHost.Children.Add(BuildBurnChart(series));
             ContentHost.Children.Add(new TextBlock
             {
-                Text = "Lines show percent used. Drops are quota-window resets; dots are the latest recorded values.",
+                Text = "Lines show percent used. Drops are quota-window resets; breaks are spans when ClaudeBar wasn't running; dots are the latest recorded values.",
                 FontSize = 11, Foreground = Secondary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0)
             });
         }
@@ -188,6 +188,15 @@ public partial class StatisticsWindow : Window
     }
 
     // Burn chart data
+
+    /// <summary>
+    /// Break the burn line when consecutive samples sit farther apart than this. ClaudeBar records
+    /// roughly every five minutes while running, so a larger gap means it simply wasn't running
+    /// (machine asleep or off) and there is no data to connect. Drawing a straight line across the
+    /// gap would imply steady usage that never happened — the single biggest source of a misleading
+    /// chart when the app has been off for a while.
+    /// </summary>
+    private static readonly TimeSpan GapThreshold = TimeSpan.FromMinutes(20);
 
     private static readonly Brush[] SeriesPalette =
     {
@@ -286,11 +295,30 @@ public partial class StatisticsWindow : Window
         foreach (var (key, pts) in series)
         {
             var brush = SeriesPalette[idx % SeriesPalette.Length];
-            if (pts.Count >= 2)
+            // Draw one polyline per contiguous run, breaking wherever the app wasn't running long
+            // enough to record. A lone sample stranded between two gaps gets a small dot so it is
+            // still visible (a one-point polyline would draw nothing).
+            var segStart = 0;
+            for (var i = 1; i <= pts.Count; i++)
             {
-                var poly = new Polyline { Stroke = brush, StrokeThickness = 1.75, StrokeLineJoin = PenLineJoin.Round };
-                foreach (var (d, p) in pts) poly.Points.Add(new Point(X(d), Y(p)));
-                canvas.Children.Add(poly);
+                var boundary = i == pts.Count || (pts[i].date - pts[i - 1].date) > GapThreshold;
+                if (!boundary) continue;
+                var segLen = i - segStart;
+                if (segLen >= 2)
+                {
+                    var poly = new Polyline { Stroke = brush, StrokeThickness = 1.75, StrokeLineJoin = PenLineJoin.Round };
+                    for (var j = segStart; j < i; j++) poly.Points.Add(new Point(X(pts[j].date), Y(pts[j].pct)));
+                    canvas.Children.Add(poly);
+                }
+                else if (segLen == 1)
+                {
+                    var (d, p) = pts[segStart];
+                    var mark = new Ellipse { Width = 3, Height = 3, Fill = brush };
+                    Canvas.SetLeft(mark, X(d) - 1.5);
+                    Canvas.SetTop(mark, Y(p) - 1.5);
+                    canvas.Children.Add(mark);
+                }
+                segStart = i;
             }
             var last = pts[^1];
             var dot = new Ellipse { Width = 7, Height = 7, Fill = brush };
@@ -330,7 +358,7 @@ public partial class StatisticsWindow : Window
 
         if (activity.TotalPrompts == 0)
         {
-            ContentHost.Children.Add(EmptyState("No prompt history found in ~/.claude/history.jsonl yet."));
+            ContentHost.Children.Add(EmptyState("No Claude Code activity found under ~/.claude yet."));
             return;
         }
 

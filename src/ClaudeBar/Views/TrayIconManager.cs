@@ -24,6 +24,7 @@ public sealed class TrayIconManager : IDisposable
     private readonly AutoUpdater _updater;
     private MenuWindow? _popover;
     private StatisticsWindow? _statistics;
+    private PreferencesWindow? _preferences;
     private IntPtr _lastIconHandle = IntPtr.Zero;
 
     public TrayIconManager(UsageStore store, AutoUpdater updater)
@@ -49,6 +50,7 @@ public sealed class TrayIconManager : IDisposable
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Statistics", null, (_, _) => ShowStatistics());
+        menu.Items.Add("Settings", null, (_, _) => ShowPreferences());
         menu.Items.Add("Refresh", null, async (_, _) =>
         {
             await _store.RefreshAsync(force: true);
@@ -83,7 +85,7 @@ public sealed class TrayIconManager : IDisposable
             _popover.Hide();
             return;
         }
-        _popover ??= new MenuWindow(_store, _updater, ShowStatistics);
+        _popover ??= new MenuWindow(_store, _updater, ShowStatistics, ShowPreferences);
         _popover.ShowNearTray();
     }
 
@@ -101,6 +103,22 @@ public sealed class TrayIconManager : IDisposable
             _statistics.Activate();
         }
         _statistics.WindowState = System.Windows.WindowState.Normal;
+    }
+
+    private void ShowPreferences()
+    {
+        _popover?.Hide();
+        if (_preferences is null)
+        {
+            _preferences = new PreferencesWindow(_store, _updater);
+            _preferences.Closed += (_, _) => _preferences = null;
+            _preferences.Show();
+        }
+        else
+        {
+            _preferences.Activate();
+        }
+        _preferences.WindowState = System.Windows.WindowState.Normal;
     }
 
     // MARK: - Icon rendering

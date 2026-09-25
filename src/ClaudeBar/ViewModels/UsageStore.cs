@@ -78,6 +78,16 @@ public sealed class UsageStore : INotifyPropertyChanged
     private const string RateLimitedUntilKey = "rateLimitedUntil";
     private const string RateLimitStreakKey = "rateLimitStreak";
 
+    /// <summary>Auto-refresh cadence in seconds; the menu exposes a picker bound to this key.</summary>
+    public const string PollIntervalKey = "pollIntervalSeconds";
+    private const int DefaultPollSeconds = 300;
+
+    /// <summary>The configured cadence, clamped so a stray value can neither hammer the API nor stall.</summary>
+    internal static int ClampPollSeconds(int stored) => Math.Min(3600, Math.Max(60, stored));
+
+    private static int PollIntervalSeconds() =>
+        ClampPollSeconds(Settings.GetInt(PollIntervalKey, DefaultPollSeconds));
+
     public UsageStore()
     {
         _notifications = new NotificationManager((t, b, c) => NotificationRequested?.Invoke(t, b, c));
@@ -160,11 +170,13 @@ public sealed class UsageStore : INotifyPropertyChanged
             else
             {
                 ErrorMessage = "No session data from API.";
+                Log.Warn("Fetch succeeded but carried no session window");
             }
         }
         catch (ApiException ex) when (ex.Kind == ApiErrorKind.Unauthorized)
         {
             ErrorMessage = ex.Message;
+            Log.Warn("Usage fetch unauthorized", ex.Message);
         }
         catch (ApiException ex) when (ex.Kind == ApiErrorKind.RateLimited)
         {
@@ -191,6 +203,10 @@ public sealed class UsageStore : INotifyPropertyChanged
         catch (Exception ex)
         {
             ErrorMessage = ex.Message;
+            // The catch-all bucket: a network drop, a malformed payload, a filesystem error while
+            // reading a token. Historically this vanished into a terse UI message; log the full
+            // exception so a recurring "no data" spell is actually diagnosable after the fact.
+            Log.Error("Usage refresh failed", ex);
         }
         finally
         {
@@ -317,9 +333,16 @@ public sealed class UsageStore : INotifyPropertyChanged
 
     private void ScheduleTimer()
     {
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(300) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PollIntervalSeconds()) };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
+    }
+
+    /// <summary>Re-read the configured cadence and apply it to the live timer (called when the
+    /// menu picker changes it) so a new interval takes effect without a restart.</summary>
+    public void ApplyPollInterval()
+    {
+        if (_timer is not null) _timer.Interval = TimeSpan.FromSeconds(PollIntervalSeconds());
     }
 
     /// <summary>A light UI heartbeat so relative "updated N ago" text and staleness re-render.</summary>

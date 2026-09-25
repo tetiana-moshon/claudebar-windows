@@ -24,6 +24,15 @@ public static class AppPaths
     /// <summary>~/.claude/history.jsonl — one line appended per submitted prompt.</summary>
     public static string HistoryFile => Path.Combine(ClaudeDir, "history.jsonl");
 
+    /// <summary>
+    /// ~/.claude/projects — one subdirectory per working directory, each holding the session
+    /// transcript <c>.jsonl</c> files Claude Code writes for both the CLI and the desktop app. Every
+    /// line carries an ISO-8601 <c>timestamp</c>, so these transcripts are a far richer "when do I
+    /// work" signal than <see cref="HistoryFile"/> — which only the CLI appends to, and so stays
+    /// empty for anyone who drives Claude Code mostly from the desktop app.
+    /// </summary>
+    public static string ProjectsDir => Path.Combine(ClaudeDir, "projects");
+
     /// <summary>%APPDATA%\Claude — the Claude desktop (Electron) app's user-data directory.</summary>
     public static string DesktopDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude");

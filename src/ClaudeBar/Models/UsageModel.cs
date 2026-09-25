@@ -243,11 +243,19 @@ public sealed class UsageSnapshot
         var session = RateWindow.From(response.FiveHour, 5);
         if (session is null) return null;
         var scoped = response.Limits?.FirstOrDefault(l => l.Kind == "weekly_scoped");
+        // A weekly_scoped entry at 0% carries no signal: the endpoint reports it for a model the plan
+        // meters but that you may never touch (e.g. it stays a flat "Fable 0%" forever), so surfacing
+        // it only adds a dead card, a dead recommendation line, and a flat-zero series to the chart —
+        // and a zero row to every history sample. Treat 0% as "nothing to show"; it reappears the
+        // moment real usage lands, which is the only time it's actionable.
+        var scopedWindow = scoped?.Percent is > 0
+            ? RateWindow.From(scoped.Percent, scoped.ResetsAt, 168)
+            : null;
         return new UsageSnapshot(
             session,
             RateWindow.From(response.SevenDay, 168),
-            RateWindow.From(scoped?.Percent, scoped?.ResetsAt, 168),
-            scoped?.Scope?.Model?.DisplayName);
+            scopedWindow,
+            scopedWindow is null ? null : scoped?.Scope?.Model?.DisplayName);
     }
 }
 
