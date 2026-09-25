@@ -106,8 +106,12 @@ public partial class PreferencesWindow : Window
         grid.Children.Add(lbl);
 
         var combo = new ComboBox { MinWidth = 110, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var (text, value) in options)
-            combo.Items.Add(new ComboBoxItem { Content = text, Tag = value, IsSelected = value == current });
+        // Snap to the nearest option instead of exact-matching: a stored value outside the offered
+        // buckets (a hand-edited or legacy settings.json) would otherwise select nothing and render the
+        // combo blank, even though runtime behavior stays safe via its own clamp.
+        var selected = NearestIndex(current, options);
+        for (var i = 0; i < options.Length; i++)
+            combo.Items.Add(new ComboBoxItem { Content = options[i].text, Tag = options[i].value, IsSelected = i == selected });
         // Attach after the initial selection so the first render doesn't fire a spurious write.
         combo.SelectionChanged += (_, _) =>
         {
@@ -124,6 +128,23 @@ public partial class PreferencesWindow : Window
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 0)
             });
         return panel;
+    }
+
+    /// <summary>
+    /// The index of the option whose value is closest to <paramref name="current"/> (the first on a tie).
+    /// Guarantees a dropdown always has a selection even when the stored value matches no offered option,
+    /// so the combo never renders blank. Assumes a non-empty <paramref name="options"/>.
+    /// </summary>
+    internal static int NearestIndex(int current, (string text, int value)[] options)
+    {
+        var best = 0;
+        var bestDistance = Math.Abs((long)options[0].value - current);
+        for (var i = 1; i < options.Length; i++)
+        {
+            var distance = Math.Abs((long)options[i].value - current);
+            if (distance < bestDistance) { best = i; bestDistance = distance; }
+        }
+        return best;
     }
 
     private static SolidColorBrush Freeze(byte r, byte g, byte b, byte a = 0xFF)

@@ -42,22 +42,38 @@ public static class ActivityHistory
     /// rhythm normalizes away — every downstream signal is a ratio or a set except the data-sufficiency
     /// floor, which it can only help clear.
     /// </summary>
-    public static ActivityProfile Load()
+    public static ActivityProfile Load() => Load(AppPaths.ProjectsDir, AppPaths.HistoryFile);
+
+    /// <summary>
+    /// Test seam behind <see cref="Load()"/>: the same work against caller-supplied paths and bounds,
+    /// so the tail-reader and the transcript scan caps (byte budget, file cap, window cutoff, and the
+    /// newest-first ordering the budget correctness depends on) are reachable from a unit test without
+    /// touching the real <see cref="AppPaths"/>. Production always calls the parameterless overload,
+    /// which passes the shipping constants unchanged.
+    /// </summary>
+    internal static ActivityProfile Load(
+        string projectsDir, string historyFile,
+        long historyMaxBytes = MaxBytes,
+        long transcriptTotalBytes = MaxTranscriptTotalBytes,
+        int transcriptMaxFiles = MaxTranscriptFiles,
+        long transcriptTailBytes = MaxTranscriptTailBytes,
+        TimeSpan? transcriptWindow = null)
     {
         var tally = new Tally();
-        AddHistoryFile(tally);
-        AddProjectTranscripts(tally);
+        AddHistoryFile(tally, historyFile, historyMaxBytes);
+        AddProjectTranscripts(tally, projectsDir, transcriptTotalBytes, transcriptMaxFiles,
+            transcriptTailBytes, transcriptWindow ?? TranscriptWindow);
         return tally.ToProfile();
     }
 
     // MARK: - Source: the CLI history.jsonl (epoch-millisecond timestamps)
 
-    private static void AddHistoryFile(Tally tally)
+    private static void AddHistoryFile(Tally tally, string historyFile, long maxBytes)
     {
         FileStream stream;
         try
         {
-            stream = new FileStream(AppPaths.HistoryFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            stream = new FileStream(historyFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         }
         catch
         {
@@ -66,7 +82,7 @@ public static class ActivityHistory
 
         using (stream)
         {
-            if (ReadTail(stream, MaxBytes, out var text, out var truncated) is false) return;
+            if (ReadTail(stream, maxBytes, out var text, out var truncated) is false) return;
 
             var lines = text.Split('\n');
             var startIdx = truncated && lines.Length > 0 ? 1 : 0; // drop the partial first line
@@ -93,32 +109,24 @@ public static class ActivityHistory
 
     // MARK: - Source: the project session transcripts (ISO-8601 string timestamps)
 
-    private static void AddProjectTranscripts(Tally tally)
+    private static void AddProjectTranscripts(Tally tally, string projectsDir, long totalBytes,
+        int maxFiles, long tailBytes, TimeSpan window)
     {
-        string[] files;
-        try
-        {
-            if (!Directory.Exists(AppPaths.ProjectsDir)) return;
-            files = Directory.GetFiles(AppPaths.ProjectsDir, "*.jsonl", SearchOption.AllDirectories);
-        }
-        catch
-        {
-            return;
-        }
+        if (!Directory.Exists(projectsDir)) return;
 
-        var cutoff = DateTime.Now - TranscriptWindow;
-        var recent = files
+        var cutoff = DateTime.Now - window;
+        var recent = EnumerateTranscriptFiles(projectsDir)
             .Select(path => { try { return (path, mtime: File.GetLastWriteTime(path)); } catch { return (path, mtime: DateTime.MinValue); } })
             .Where(f => f.mtime >= cutoff)
             .OrderByDescending(f => f.mtime) // newest first, so the byte budget buys the freshest rhythm
-            .Take(MaxTranscriptFiles)
+            .Take(maxFiles)
             .ToArray();
 
-        long budget = MaxTranscriptTotalBytes;
+        long budget = totalBytes;
         foreach (var (path, _) in recent)
         {
             if (budget <= 0) break;
-            var cap = Math.Min(MaxTranscriptTailBytes, budget);
+            var cap = Math.Min(tailBytes, budget);
             FileStream stream;
             try { stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
             catch { continue; }
@@ -129,6 +137,33 @@ public static class ActivityHistory
                 AddTranscriptText(tally, text, truncated);
             }
         }
+    }
+
+    /// <summary>
+    /// Every <c>*.jsonl</c> under <paramref name="projectsDir"/>, gathered one project subfolder at a
+    /// time so a single unreadable folder skips only itself instead of aborting the whole scan (the old
+    /// single <see cref="Directory.GetFiles(string,string,SearchOption)"/> threw on the first bad
+    /// subdirectory, dropping the entire transcript source). The path list is still materialized because
+    /// selecting the newest files requires sorting the whole set by mtime.
+    /// </summary>
+    private static List<string> EnumerateTranscriptFiles(string projectsDir)
+    {
+        var files = new List<string>();
+
+        // Loose transcripts directly under projects/ (rare, but cheap to include).
+        try { files.AddRange(Directory.EnumerateFiles(projectsDir, "*.jsonl", SearchOption.TopDirectoryOnly)); }
+        catch { /* ignore an unreadable root */ }
+
+        string[] subdirs;
+        try { subdirs = Directory.GetDirectories(projectsDir); }
+        catch { return files; }
+
+        foreach (var dir in subdirs)
+        {
+            try { files.AddRange(Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories)); }
+            catch { /* skip only this project folder */ }
+        }
+        return files;
     }
 
     private static void AddTranscriptText(Tally tally, string text, bool truncated)
@@ -154,12 +189,19 @@ public static class ActivityHistory
         {
             var line = lines[li];
             if (line.Length == 0) continue;
+            // Cheap pre-reject of the non-user traffic (assistant/summary/queue lines) so the JSON parse
+            // stays off the vast majority of lines. The tool-result exclusion below is structural, not a
+            // substring, so a genuine prompt whose text merely contains "tool_result" is still counted.
             if (line.IndexOf("\"type\":\"user\"", StringComparison.Ordinal) < 0) continue;
-            if (line.IndexOf("tool_result", StringComparison.Ordinal) >= 0) continue;
             try
             {
                 using var doc = JsonDocument.Parse(line);
-                if (!doc.RootElement.TryGetProperty("timestamp", out var tsEl) ||
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("type", out var typeEl) ||
+                    typeEl.ValueKind != JsonValueKind.String || typeEl.GetString() != "user")
+                    continue;
+                if (IsToolResult(root)) continue; // a type:"user" echo of a tool result — not a real prompt
+                if (!root.TryGetProperty("timestamp", out var tsEl) ||
                     tsEl.ValueKind != JsonValueKind.String ||
                     !DateTimeOffset.TryParse(tsEl.GetString(), System.Globalization.CultureInfo.InvariantCulture,
                         System.Globalization.DateTimeStyles.AdjustToUniversal, out var dto))
@@ -172,6 +214,26 @@ public static class ActivityHistory
             }
         }
         return times;
+    }
+
+    /// <summary>
+    /// A <c>type:"user"</c> line whose <c>message.content</c> carries a <c>tool_result</c> block — the
+    /// echo Claude Code writes when a tool returns, not a human prompt. Checking the parsed structure
+    /// (rather than a substring on the raw line) means a real prompt that merely mentions "tool_result"
+    /// is not mistaken for one.
+    /// </summary>
+    private static bool IsToolResult(JsonElement root)
+    {
+        if (!root.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!msg.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            return false;
+        foreach (var block in content.EnumerateArray())
+            if (block.ValueKind == JsonValueKind.Object &&
+                block.TryGetProperty("type", out var t) &&
+                t.ValueKind == JsonValueKind.String && t.GetString() == "tool_result")
+                return true;
+        return false;
     }
 
     // MARK: - Shared helpers

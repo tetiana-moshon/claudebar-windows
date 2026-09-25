@@ -45,6 +45,18 @@ public class ActivityHistoryTests
     }
 
     [Fact]
+    public void Counts_a_prompt_whose_text_merely_mentions_tool_result()
+    {
+        // The tool-result exclusion is structural (a tool_result content block), not a substring — a
+        // genuine prompt that only talks about "tool_result" must still count.
+        var text = Line("user", "2026-09-24T12:00:00Z",
+            ",\"message\":{\"role\":\"user\",\"content\":\"how do I read a tool_result?\"}");
+        var times = ActivityHistory.ParseTranscriptPromptTimes(text, truncated: false);
+        Assert.Single(times);
+        Assert.Equal(new DateTimeOffset(2026, 9, 24, 12, 0, 0, TimeSpan.Zero).LocalDateTime, times[0]);
+    }
+
+    [Fact]
     public void Drops_the_partial_first_line_when_truncated()
     {
         // A byte-aligned tail can start mid-line; that fragment must be dropped, not misparsed.
