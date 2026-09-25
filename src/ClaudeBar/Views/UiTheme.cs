@@ -19,6 +19,11 @@ public static class UiTheme
     public static readonly Brush Secondary = Frozen(0x8E, 0x8E, 0x93);
     public static readonly Brush Purple = Frozen(0xAF, 0x52, 0xDE);
 
+    // Label greys for the popover-style settings windows (Preferences, LimitAlert). A hair lighter
+    // than the tray-status Secondary above, which is tuned for the menu bar instead.
+    public static readonly Brush PrimaryText = Frozen(0xF2, 0xF2, 0xF7);
+    public static readonly Brush SecondaryText = Frozen(0x9A, 0x9A, 0xA0);
+
     public static Brush ForStatus(StatusLevel level) => level switch
     {
         StatusLevel.Green => Green,

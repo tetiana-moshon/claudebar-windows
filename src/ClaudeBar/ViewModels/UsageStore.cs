@@ -21,6 +21,9 @@ public sealed class UsageStore : INotifyPropertyChanged
     /// <summary>Raised when a limit banner should be shown: (title, body, isCritical).</summary>
     public event Action<string, string, bool>? NotificationRequested;
 
+    /// <summary>Raised with each fresh snapshot so the focus-stealing limit dialog can evaluate it.</summary>
+    public event Action<UsageSnapshot>? LimitAlertRequested;
+
     private UsageSnapshot? _snapshot;
     public UsageSnapshot? Snapshot { get => _snapshot; private set { _snapshot = value; RaiseAll(); } }
 
@@ -88,22 +91,32 @@ public sealed class UsageStore : INotifyPropertyChanged
     private static int PollIntervalSeconds() =>
         ClampPollSeconds(Settings.GetInt(PollIntervalKey, DefaultPollSeconds));
 
+    /// <summary>
+    /// Verification mode (mirrors the macOS CLAUDEBAR_FAKE_LIMIT hook): when the environment variable
+    /// is set, every fetched snapshot's session window is forced to nearly-exhausted so the limit
+    /// dialog can be eyeballed without actually running a quota down. Off unless the variable is set.
+    /// </summary>
+    private static readonly bool FakeLimit =
+        Environment.GetEnvironmentVariable("CLAUDEBAR_FAKE_LIMIT") is { Length: > 0 };
+
+    private static UsageSnapshot ApplyFakeLimit(UsageSnapshot snap)
+    {
+        if (!FakeLimit) return snap;
+        // Force the session to ~3% left, resetting in 2h (clear of the imminent-reset carve-out).
+        var session = new RateWindow(usedPercent: 97, windowDuration: TimeSpan.FromHours(5),
+            resetsAt: DateTime.Now.AddHours(2));
+        return new UsageSnapshot(session, snap.Weekly, snap.ScopedWeekly, snap.ScopedModelName);
+    }
+
     public UsageStore()
     {
         _notifications = new NotificationManager((t, b, c) => NotificationRequested?.Invoke(t, b, c));
 
+        // A leftover snooze from a previous fake-limit run would otherwise swallow the forced alert.
+        if (FakeLimit) LimitAlert.ClearSuppression(LimitScope.Session);
+
         LoadPersistedRateLimit();
         ReloadActivity();
-
-        // Skip the startup probe while a persisted backoff window is still active, but schedule the
-        // automatic retry so the state clears itself the moment the window elapses.
-        if (_rateLimitedUntil is { } until && until > DateTime.Now)
-        {
-            ErrorMessage = RateLimitedMessage((until - DateTime.Now).TotalSeconds);
-            ScheduleRateLimitRetry();
-        }
-        else
-            _ = RefreshAsync();
 
         ScheduleTimer();
         ScheduleUiTick();
@@ -118,6 +131,25 @@ public sealed class UsageStore : INotifyPropertyChanged
                 await RefreshOnActivityAsync();
             });
         });
+    }
+
+    /// <summary>
+    /// Kick off the first usage fetch. Deliberately separate from the constructor so the host can wire
+    /// up event subscribers (notably the limit-alert presenter's <c>LimitAlertRequested</c> handler)
+    /// before the initial refresh can raise them — otherwise a fast or cached fetch path could complete
+    /// before anyone is listening and the first evaluation would be lost.
+    /// </summary>
+    public void Start()
+    {
+        // Skip the startup probe while a persisted backoff window is still active, but schedule the
+        // automatic retry so the state clears itself the moment the window elapses.
+        if (_rateLimitedUntil is { } until && until > DateTime.Now)
+        {
+            ErrorMessage = RateLimitedMessage((until - DateTime.Now).TotalSeconds);
+            ScheduleRateLimitRetry();
+        }
+        else
+            _ = RefreshAsync();
     }
 
     /// <summary>Re-derive the active-hours profile from history.jsonl off the UI thread.</summary>
@@ -161,11 +193,13 @@ public sealed class UsageStore : INotifyPropertyChanged
             var snap = UsageSnapshot.From(response);
             if (snap is not null)
             {
+                snap = ApplyFakeLimit(snap);
                 Snapshot = snap;
                 LastUpdated = DateTime.Now;
                 ErrorMessage = null;
                 History.Record(snap);
                 _notifications.Evaluate(Recommendation);
+                LimitAlertRequested?.Invoke(snap);
             }
             else
             {
