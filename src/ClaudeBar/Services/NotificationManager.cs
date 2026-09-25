@@ -15,7 +15,24 @@ public sealed class NotificationManager
     /// <summary>Notifications on by default; the menu exposes a checkbox bound to this key.</summary>
     public const string EnabledKey = "notificationsEnabled";
 
+    /// <summary>The lowest urgency that fires a banner; the menu exposes a picker bound to this key.</summary>
+    public const string ThresholdKey = "notifyThreshold";
+
     public static bool IsEnabled => Settings.GetBool(EnabledKey, defaultValue: true);
+
+    /// <summary>
+    /// The configured attention threshold, read live so a change takes effect on the next refresh.
+    /// Low is never a valid threshold (it would banner every calm update), so the stored value is
+    /// clamped into Medium…Critical.
+    /// </summary>
+    public static Urgency Threshold => ClampThreshold(Settings.GetInt(ThresholdKey, (int)Urgency.High));
+
+    internal static Urgency ClampThreshold(int stored)
+    {
+        if (stored < (int)Urgency.Medium) return Urgency.Medium;
+        if (stored > (int)Urgency.Critical) return Urgency.Critical;
+        return (Urgency)stored;
+    }
 
     /// <summary>show(title, body, isCritical).</summary>
     private readonly Action<string, string, bool> _show;
@@ -26,9 +43,6 @@ public sealed class NotificationManager
     /// threshold, so the next real spike alerts again. null means "nothing outstanding".
     /// </summary>
     private Urgency? _lastNotifiedUrgency;
-
-    /// <summary>Only High and Critical warrant interrupting the user.</summary>
-    private const Urgency AttentionThreshold = Urgency.High;
 
     public NotificationManager(Action<string, string, bool> show) => _show = show;
 
@@ -41,7 +55,7 @@ public sealed class NotificationManager
         if (!IsEnabled || recommendation is null) return;
         var urgency = recommendation.Urgency;
 
-        if (urgency < AttentionThreshold)
+        if (urgency < Threshold)
         {
             // Back in calm territory — arm the next rise.
             _lastNotifiedUrgency = null;
