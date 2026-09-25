@@ -11,7 +11,7 @@
     <RootNamespace>ClaudeBar</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <!-- Self-contained single-file packaging is applied only at publish time (see publish.ps1,
          which passes -r/-p:PublishSingleFile). Keeping it out of the plain build avoids the
          single-file apphost self-extract/relaunch behavior during development. -->
