@@ -33,9 +33,36 @@ public static class AppPaths
     /// </summary>
     public static string ProjectsDir => Path.Combine(ClaudeDir, "projects");
 
-    /// <summary>%APPDATA%\Claude — the Claude desktop (Electron) app's user-data directory.</summary>
-    public static string DesktopDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude");
+    /// <summary>
+    /// The Claude desktop (Electron) app's user-data directory. The installer build writes to
+    /// %APPDATA%\Claude; the Microsoft Store (MSIX) build has its AppData writes virtualized into
+    /// %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude, which unpackaged processes like
+    /// ours never see under %APPDATA%. Prefer whichever holds a token cache, the installer path first.
+    /// </summary>
+    public static string DesktopDir
+    {
+        get
+        {
+            var classic = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude");
+            if (File.Exists(Path.Combine(classic, "config.json"))) return classic;
+
+            var packages = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages");
+            try
+            {
+                var msix = Directory.EnumerateDirectories(packages, "Claude_*")
+                    .Select(p => Path.Combine(p, "LocalCache", "Roaming", "Claude"))
+                    .Where(p => File.Exists(Path.Combine(p, "config.json")))
+                    .OrderByDescending(p => File.GetLastWriteTimeUtc(Path.Combine(p, "config.json")))
+                    .FirstOrDefault();
+                if (msix is not null) return msix;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return classic;
+        }
+    }
 
     /// <summary>The desktop app's config store holding the encrypted OAuth token cache.</summary>
     public static string DesktopConfigFile => Path.Combine(DesktopDir, "config.json");
