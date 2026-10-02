@@ -34,4 +34,24 @@ public class UsageStoreTests
             prev = cur;
         }
     }
+
+    [Fact]
+    public void EffectiveBackoff_without_RetryAfter_is_our_schedule() =>
+        Assert.Equal(12 * 60, UsageStore.EffectiveRateLimitBackoff(2, null));
+
+    [Fact]
+    public void EffectiveBackoff_waits_for_a_longer_RetryAfter() =>
+        // The real case: our schedule said 12 min, the server asked for 2539s (~42 min).
+        Assert.Equal(2539, UsageStore.EffectiveRateLimitBackoff(2, TimeSpan.FromSeconds(2539)));
+
+    [Fact]
+    public void EffectiveBackoff_keeps_our_floor_over_a_shorter_RetryAfter() =>
+        Assert.Equal(6 * 60, UsageStore.EffectiveRateLimitBackoff(1, TimeSpan.FromSeconds(30)));
+
+    [Fact]
+    public void EffectiveBackoff_honours_RetryAfter_above_our_cap_up_to_the_bound()
+    {
+        Assert.Equal(2 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromHours(2)));
+        Assert.Equal(6 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromDays(3)));
+    }
 }
