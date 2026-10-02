@@ -39,6 +39,9 @@ skip this step — the tray app must be running to verify that a change works.
 ## Data locations (Windows)
 
 - CLI token: `%USERPROFILE%\.claude\.credentials.json` (plaintext JSON, `claudeAiOauth.accessToken`)
-- Desktop token cache: `%APPDATA%\Claude\config.json` + `Local State` (os_crypt v10 / DPAPI)
+- Desktop token cache: `config.json` + `Local State` (os_crypt v10 / DPAPI) in `%APPDATA%\Claude`
+  (installer build) or `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude` (Microsoft
+  Store build — MSIX virtualizes its AppData there). Both are scanned, freshest `config.json` first
+  (`AppPaths.DesktopDirCandidates`).
 - Activity: `%USERPROFILE%\.claude\history.jsonl`
 - Our data + settings: `%APPDATA%\ClaudeBar\` (`usage-history.jsonl`, `settings.json`, `error.log`)
