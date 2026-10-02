@@ -33,42 +33,48 @@ public static class AppPaths
     /// </summary>
     public static string ProjectsDir => Path.Combine(ClaudeDir, "projects");
 
-    /// <summary>
-    /// The Claude desktop (Electron) app's user-data directory. The installer build writes to
-    /// %APPDATA%\Claude; the Microsoft Store (MSIX) build has its AppData writes virtualized into
-    /// %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude, which unpackaged processes like
-    /// ours never see under %APPDATA%. Prefer whichever holds a token cache, the installer path first.
-    /// </summary>
-    public static string DesktopDir
-    {
-        get
-        {
-            var classic = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude");
-            if (File.Exists(Path.Combine(classic, "config.json"))) return classic;
-
-            var packages = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages");
-            try
-            {
-                var msix = Directory.EnumerateDirectories(packages, "Claude_*")
-                    .Select(p => Path.Combine(p, "LocalCache", "Roaming", "Claude"))
-                    .Where(p => File.Exists(Path.Combine(p, "config.json")))
-                    .OrderByDescending(p => File.GetLastWriteTimeUtc(Path.Combine(p, "config.json")))
-                    .FirstOrDefault();
-                if (msix is not null) return msix;
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            return classic;
-        }
-    }
-
     /// <summary>The desktop app's config store holding the encrypted OAuth token cache.</summary>
-    public static string DesktopConfigFile => Path.Combine(DesktopDir, "config.json");
+    public const string DesktopConfigFileName = "config.json";
 
     /// <summary>Chromium/Electron "Local State" holding the DPAPI-wrapped os_crypt master key.</summary>
-    public static string DesktopLocalStateFile => Path.Combine(DesktopDir, "Local State");
+    public const string DesktopLocalStateFileName = "Local State";
+
+    /// <summary>
+    /// Every Claude desktop (Electron) user-data directory that could hold the live token cache,
+    /// freshest first. See <see cref="DesktopDirCandidates"/>.
+    /// </summary>
+    public static IReadOnlyList<string> DesktopDirs => DesktopDirCandidates(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    /// <summary>
+    /// The installer build writes to %APPDATA%\Claude; the Microsoft Store (MSIX) build has its
+    /// AppData writes virtualized into %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude,
+    /// which unpackaged processes like ours never see under %APPDATA%. Someone who moved from the
+    /// installer build to the Store build keeps a frozen %APPDATA%\Claude behind, so neither location
+    /// gets priority: keep every folder holding both the cache and its key, ordered by the newest
+    /// <c>config.json</c> — the desktop app rewrites it on each token refresh, so the live install
+    /// leads. Split out with explicit roots so the selection is testable.
+    /// </summary>
+    internal static IReadOnlyList<string> DesktopDirCandidates(string appDataDir, string localAppDataDir)
+    {
+        var dirs = new List<string> { Path.Combine(appDataDir, "Claude") };
+        try
+        {
+            dirs.AddRange(Directory.EnumerateDirectories(Path.Combine(localAppDataDir, "Packages"), "Claude_*")
+                .Select(p => Path.Combine(p, "LocalCache", "Roaming", "Claude")));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No Packages folder (or no access to it): only the installer location is left.
+        }
+
+        return dirs
+            .Where(d => File.Exists(Path.Combine(d, DesktopConfigFileName)) &&
+                        File.Exists(Path.Combine(d, DesktopLocalStateFileName)))
+            .OrderByDescending(d => File.GetLastWriteTimeUtc(Path.Combine(d, DesktopConfigFileName)))
+            .ToArray();
+    }
 
     /// <summary>%APPDATA%\ClaudeBar — our own persisted data (usage history, etc.).</summary>
     public static string DataDir
