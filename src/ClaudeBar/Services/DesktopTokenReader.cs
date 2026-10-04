@@ -10,14 +10,16 @@ namespace ClaudeBar.Services;
 /// ClaudeBar never has to refresh the (aggressively rate-limited) OAuth token endpoint itself —
 /// the source of the old daily-429 lockups.
 ///
-/// The desktop app (Electron) caches its tokens in <c>%APPDATA%\Claude\config.json</c> under the
-/// keys <c>oauth:tokenCache</c> and <c>oauth:tokenCacheV2</c> (both are read and merged — the
+/// The desktop app (Electron) caches its tokens in <c>config.json</c> in its user-data directory —
+/// <c>%APPDATA%\Claude</c> for the installer build, or
+/// <c>%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude</c> for the Microsoft Store build
+/// (see <see cref="AppPaths.DesktopDirCandidates"/>) — under the keys <c>oauth:tokenCache</c> and <c>oauth:tokenCacheV2</c> (both are read and merged — the
 /// desktop app has been observed moving which key holds the live client-9d1c250a entry across
 /// releases), each a Chromium <c>os_crypt</c> "v10" blob.
 ///
 /// On Windows the blob is: "v10" (3 bytes) + 12-byte GCM nonce + ciphertext + 16-byte GCM tag,
 /// AES-256-GCM. The key is the app's random os_crypt key stored — DPAPI-wrapped, with a 5-byte
-/// "DPAPI" prefix — in <c>%APPDATA%\Claude\Local State</c> under <c>os_crypt.encrypted_key</c>.
+/// "DPAPI" prefix — in <c>Local State</c> in the same directory under <c>os_crypt.encrypted_key</c>.
 /// (This differs from macOS, where the key is PBKDF2-derived from a keychain secret and the
 /// cipher is AES-128-CBC with a fixed IV.)
 ///
@@ -46,9 +48,37 @@ public static class DesktopTokenReader
     /// </summary>
     public static IReadOnlyList<string> CurrentTokens()
     {
-        var cache = DecryptedTokenCache();
-        if (cache is null) return Array.Empty<string>();
-        return SelectUsableTokens(cache, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var dirs = AppPaths.DesktopDirs;
+        // Freshest directory first, but fall through: a newer-looking folder can still hold only
+        // expired tokens. The cache and its key are always read from the same directory.
+        foreach (var dir in dirs)
+        {
+            var cache = DecryptedTokenCache(dir);
+            if (cache is null) continue;
+            var tokens = SelectUsableTokens(cache, now);
+            if (tokens.Count == 0) continue;
+            NoteSource(dir, dirs.Count);
+            return tokens;
+        }
+        NoteSource(null, dirs.Count);
+        return Array.Empty<string>();
+    }
+
+    private static string? _lastSource = "";
+
+    /// <summary>
+    /// Log whenever the directory that yields tokens changes (including to "none"). A silent
+    /// fallback to the CLI token is what once hid a days-long 429 lockout, so make it visible.
+    /// </summary>
+    private static void NoteSource(string? dir, int candidates)
+    {
+        if (dir == _lastSource) return;
+        _lastSource = dir;
+        if (dir is null)
+            Log.Info("No usable desktop token cache", $"{candidates} candidate folder(s) checked");
+        else
+            Log.Info("Desktop token cache", dir);
     }
 
     /// <summary>
@@ -88,15 +118,15 @@ public static class DesktopTokenReader
             .ToArray();
     }
 
-    private static Dictionary<string, JsonElement>? DecryptedTokenCache()
+    private static Dictionary<string, JsonElement>? DecryptedTokenCache(string dir)
     {
-        var key = DeriveKey();
+        var key = DeriveKey(dir);
         if (key is null) return null;
 
         JsonDocument root;
         try
         {
-            root = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopConfigFile));
+            root = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, AppPaths.DesktopConfigFileName)));
         }
         catch
         {
@@ -143,11 +173,12 @@ public static class DesktopTokenReader
     /// The AES-256 key: read <c>os_crypt.encrypted_key</c> from Local State, base64-decode, strip
     /// the 5-byte "DPAPI" prefix, and DPAPI-unprotect it for the current user.
     /// </summary>
-    private static byte[]? DeriveKey()
+    private static byte[]? DeriveKey(string dir)
     {
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(AppPaths.DesktopLocalStateFile));
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(Path.Combine(dir, AppPaths.DesktopLocalStateFileName)));
             if (!doc.RootElement.TryGetProperty("os_crypt", out var osCrypt) ||
                 !osCrypt.TryGetProperty("encrypted_key", out var keyEl) ||
                 keyEl.ValueKind != JsonValueKind.String)
