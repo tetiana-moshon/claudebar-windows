@@ -54,4 +54,27 @@ public class UsageStoreTests
         Assert.Equal(2 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromHours(2)));
         Assert.Equal(6 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromDays(3)));
     }
+
+    // A forced refresh 10 min into a window that still has 20 min to run.
+    private static readonly DateTime Now = new(2026, 10, 2, 7, 0, 0);
+    private static readonly DateTime Until = Now.AddMinutes(20);
+
+    [Fact]
+    public void StretchedDeadline_keeps_the_window_without_RetryAfter() =>
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, null));
+
+    [Fact]
+    public void StretchedDeadline_keeps_the_window_for_a_shorter_or_equal_RetryAfter()
+    {
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromMinutes(5)));
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromMinutes(20)));
+    }
+
+    [Fact]
+    public void StretchedDeadline_extends_to_a_longer_RetryAfter() =>
+        Assert.Equal(Now.AddSeconds(2539), UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromSeconds(2539)));
+
+    [Fact]
+    public void StretchedDeadline_bounds_a_bogus_RetryAfter() =>
+        Assert.Equal(Now.AddHours(6), UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromDays(3)));
 }

@@ -221,13 +221,10 @@ public sealed class UsageStore : INotifyPropertyChanged
             {
                 // A forced refresh inside the window: keep the streak, but stretch the window if
                 // the server now asks for longer than what's left.
-                if (ex.RetryAfter is { } ra && now.AddSeconds(ClampServerRetryAfter(ra)) > until)
+                if (StretchedDeadline(now, until, ex.RetryAfter) is { } stretched)
                 {
-                    _rateLimitedUntil = until = now.AddSeconds(ClampServerRetryAfter(ra));
+                    _rateLimitedUntil = until = stretched;
                     PersistRateLimit();
-                    // The pending retry targets the old deadline; re-aim it at the new one.
-                    _retryCts?.Cancel();
-                    _retryCts = null;
                 }
                 ErrorMessage = RateLimitedMessage((until - now).TotalSeconds);
             }
@@ -354,8 +351,9 @@ public sealed class UsageStore : INotifyPropertyChanged
     private void ScheduleRetry(TimeSpan? delay = null)
     {
         if (_retryCts is not null) return;
-        _retryCts = new CancellationTokenSource();
-        var token = _retryCts.Token;
+        var cts = new CancellationTokenSource();
+        _retryCts = cts;
+        var token = cts.Token;
         var wait = delay ?? TimeSpan.FromSeconds(60);
         _ = Task.Run(async () =>
         {
@@ -363,6 +361,9 @@ public sealed class UsageStore : INotifyPropertyChanged
             catch { return; }
             await _dispatcher.InvokeAsync(async () =>
             {
+                // Cancelled after the delay had already elapsed but before this ran: a newer retry
+                // replaced this one, and the handle now belongs to it.
+                if (token.IsCancellationRequested || !ReferenceEquals(_retryCts, cts)) return;
                 _retryCts = null; // clear before refresh so next failure can re-schedule
                 await RefreshAsync();
             });
@@ -377,6 +378,10 @@ public sealed class UsageStore : INotifyPropertyChanged
     private void ScheduleRateLimitRetry()
     {
         if (_rateLimitedUntil is not { } until) return;
+        // A pending retry was aimed elsewhere — an older deadline, or the 60s token retry — and
+        // would block the new one; replace it so exactly one retry targets this window's end.
+        _retryCts?.Cancel();
+        _retryCts = null;
         var delay = until - DateTime.Now;
         if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
         ScheduleRetry(delay + TimeSpan.FromSeconds(2));
@@ -420,6 +425,17 @@ public sealed class UsageStore : INotifyPropertyChanged
     /// <summary>Bound a server-supplied wait so a bogus header can't park the app for days.</summary>
     internal static double ClampServerRetryAfter(TimeSpan retryAfter) =>
         Math.Clamp(retryAfter.TotalSeconds, 0, MaxServerRetryAfter);
+
+    /// <summary>
+    /// A 429 inside an active window: the later deadline when the server now asks for longer than
+    /// what's left of it, otherwise null — the window stands as it is.
+    /// </summary>
+    internal static DateTime? StretchedDeadline(DateTime now, DateTime until, TimeSpan? retryAfter)
+    {
+        if (retryAfter is not { } ra) return null;
+        var deadline = now.AddSeconds(ClampServerRetryAfter(ra));
+        return deadline > until ? deadline : null;
+    }
 
     private string RateLimitedMessage(double intervalSeconds) =>
         $"Rate limited — retry in {Format.Duration(intervalSeconds)}";
