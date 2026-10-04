@@ -75,6 +75,8 @@ public sealed class UsageStore : INotifyPropertyChanged
     private static readonly double RateLimitBackoffBase = 6 * 60;
     private static readonly double RateLimitBackoffCap = 60 * 60;
     private const int MaxRateLimitStreak = 6;
+    // A server Retry-After is honoured above our own cap, but only up to this bound.
+    private const double MaxServerRetryAfter = 6 * 60 * 60;
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MinFetchInterval = TimeSpan.FromSeconds(45);
 
@@ -217,16 +219,28 @@ public sealed class UsageStore : INotifyPropertyChanged
             var now = DateTime.Now;
             if (_rateLimitedUntil is { } until && until > now)
             {
+                // A forced refresh inside the window: keep the streak, but stretch the window if
+                // the server now asks for longer than what's left.
+                if (StretchedDeadline(now, until, ex.RetryAfter) is { } stretched)
+                {
+                    _rateLimitedUntil = until = stretched;
+                    PersistRateLimit();
+                }
                 ErrorMessage = RateLimitedMessage((until - now).TotalSeconds);
             }
             else
             {
                 _rateLimitStreak = Math.Min(_rateLimitStreak + 1, MaxRateLimitStreak);
-                var backoff = RateLimitBackoff(_rateLimitStreak);
+                var backoff = EffectiveRateLimitBackoff(_rateLimitStreak, ex.RetryAfter);
                 _rateLimitedUntil = now.AddSeconds(backoff);
                 PersistRateLimit();
                 ErrorMessage = RateLimitedMessage(backoff);
             }
+            // 429s used to be silent in error.log, which hid a days-long lockout on an expired token.
+            Log.Warn("Usage fetch rate limited",
+                $"Retry-After={(ex.RetryAfter is { } r ? $"{r.TotalSeconds:F0}s" : "none")}, " +
+                $"streak={_rateLimitStreak}, backing off until {_rateLimitedUntil:yyyy-MM-dd HH:mm:ss}" +
+                (_preferredTokenSource is { } src ? $", last good token source={src}" : ""));
             ScheduleRateLimitRetry();
         }
         catch (ApiException ex) when (ex.Kind == ApiErrorKind.TokenExpired)
@@ -337,8 +351,9 @@ public sealed class UsageStore : INotifyPropertyChanged
     private void ScheduleRetry(TimeSpan? delay = null)
     {
         if (_retryCts is not null) return;
-        _retryCts = new CancellationTokenSource();
-        var token = _retryCts.Token;
+        var cts = new CancellationTokenSource();
+        _retryCts = cts;
+        var token = cts.Token;
         var wait = delay ?? TimeSpan.FromSeconds(60);
         _ = Task.Run(async () =>
         {
@@ -346,6 +361,9 @@ public sealed class UsageStore : INotifyPropertyChanged
             catch { return; }
             await _dispatcher.InvokeAsync(async () =>
             {
+                // Cancelled after the delay had already elapsed but before this ran: a newer retry
+                // replaced this one, and the handle now belongs to it.
+                if (token.IsCancellationRequested || !ReferenceEquals(_retryCts, cts)) return;
                 _retryCts = null; // clear before refresh so next failure can re-schedule
                 await RefreshAsync();
             });
@@ -360,6 +378,10 @@ public sealed class UsageStore : INotifyPropertyChanged
     private void ScheduleRateLimitRetry()
     {
         if (_rateLimitedUntil is not { } until) return;
+        // A pending retry was aimed elsewhere — an older deadline, or the 60s token retry — and
+        // would block the new one; replace it so exactly one retry targets this window's end.
+        _retryCts?.Cancel();
+        _retryCts = null;
         var delay = until - DateTime.Now;
         if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
         ScheduleRetry(delay + TimeSpan.FromSeconds(2));
@@ -391,6 +413,28 @@ public sealed class UsageStore : INotifyPropertyChanged
     {
         var multiplier = (double)(1 << Math.Max(streak - 1, 0));
         return Math.Min(RateLimitBackoffBase * multiplier, RateLimitBackoffCap);
+    }
+
+    /// <summary>
+    /// Never retry sooner than the server asked: our own schedule is only a floor. Probing before
+    /// the server's <c>Retry-After</c> elapses just earns another 429 and grows the streak.
+    /// </summary>
+    internal static double EffectiveRateLimitBackoff(int streak, TimeSpan? retryAfter) =>
+        Math.Max(RateLimitBackoff(streak), retryAfter is { } ra ? ClampServerRetryAfter(ra) : 0);
+
+    /// <summary>Bound a server-supplied wait so a bogus header can't park the app for days.</summary>
+    internal static double ClampServerRetryAfter(TimeSpan retryAfter) =>
+        Math.Clamp(retryAfter.TotalSeconds, 0, MaxServerRetryAfter);
+
+    /// <summary>
+    /// A 429 inside an active window: the later deadline when the server now asks for longer than
+    /// what's left of it, otherwise null — the window stands as it is.
+    /// </summary>
+    internal static DateTime? StretchedDeadline(DateTime now, DateTime until, TimeSpan? retryAfter)
+    {
+        if (retryAfter is not { } ra) return null;
+        var deadline = now.AddSeconds(ClampServerRetryAfter(ra));
+        return deadline > until ? deadline : null;
     }
 
     private string RateLimitedMessage(double intervalSeconds) =>

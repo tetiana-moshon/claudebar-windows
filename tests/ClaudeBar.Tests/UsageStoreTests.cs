@@ -34,4 +34,47 @@ public class UsageStoreTests
             prev = cur;
         }
     }
+
+    [Fact]
+    public void EffectiveBackoff_without_RetryAfter_is_our_schedule() =>
+        Assert.Equal(12 * 60, UsageStore.EffectiveRateLimitBackoff(2, null));
+
+    [Fact]
+    public void EffectiveBackoff_waits_for_a_longer_RetryAfter() =>
+        // The real case: our schedule said 12 min, the server asked for 2539s (~42 min).
+        Assert.Equal(2539, UsageStore.EffectiveRateLimitBackoff(2, TimeSpan.FromSeconds(2539)));
+
+    [Fact]
+    public void EffectiveBackoff_keeps_our_floor_over_a_shorter_RetryAfter() =>
+        Assert.Equal(6 * 60, UsageStore.EffectiveRateLimitBackoff(1, TimeSpan.FromSeconds(30)));
+
+    [Fact]
+    public void EffectiveBackoff_honours_RetryAfter_above_our_cap_up_to_the_bound()
+    {
+        Assert.Equal(2 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromHours(2)));
+        Assert.Equal(6 * 60 * 60, UsageStore.EffectiveRateLimitBackoff(6, TimeSpan.FromDays(3)));
+    }
+
+    // A forced refresh 10 min into a window that still has 20 min to run.
+    private static readonly DateTime Now = new(2026, 10, 2, 7, 0, 0);
+    private static readonly DateTime Until = Now.AddMinutes(20);
+
+    [Fact]
+    public void StretchedDeadline_keeps_the_window_without_RetryAfter() =>
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, null));
+
+    [Fact]
+    public void StretchedDeadline_keeps_the_window_for_a_shorter_or_equal_RetryAfter()
+    {
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromMinutes(5)));
+        Assert.Null(UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromMinutes(20)));
+    }
+
+    [Fact]
+    public void StretchedDeadline_extends_to_a_longer_RetryAfter() =>
+        Assert.Equal(Now.AddSeconds(2539), UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromSeconds(2539)));
+
+    [Fact]
+    public void StretchedDeadline_bounds_a_bogus_RetryAfter() =>
+        Assert.Equal(Now.AddHours(6), UsageStore.StretchedDeadline(Now, Until, TimeSpan.FromDays(3)));
 }
