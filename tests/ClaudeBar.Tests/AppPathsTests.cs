@@ -80,6 +80,36 @@ public sealed class AppPathsTests : IDisposable
         Assert.Equal([_classic, msix], Candidates());
     }
 
+    private string ClaudeData(string name) => Path.Combine(_localAppData, "Claude-Data", name);
+
+    [Fact]
+    public void Claude_Data_folder_only_is_returned()
+    {
+        var data = ClaudeData("claude_pzs8sxrjxfjjc");
+        WriteDesktopDir(data, DateTime.UtcNow);
+        Assert.Equal([data], Candidates());
+    }
+
+    [Fact]
+    public void Claude_Data_folder_outranks_the_emptied_Store_folder_it_moved_from()
+    {
+        // Store build 3.1623 moves the user data out and leaves only a marker file behind.
+        var msix = Package("Claude_pzs8sxrjxfjjc");
+        Directory.CreateDirectory(msix);
+        File.WriteAllText(Path.Combine(msix, ".user-data-left.claude_pzs8sxrjxfjjc"), "");
+        var data = ClaudeData("claude_pzs8sxrjxfjjc");
+        WriteDesktopDir(data, DateTime.UtcNow);
+        WriteDesktopDir(_classic, DateTime.UtcNow.AddDays(-30));
+        Assert.Equal([data, _classic], Candidates());
+    }
+
+    [Fact]
+    public void Non_matching_Claude_Data_folder_is_ignored()
+    {
+        WriteDesktopDir(ClaudeData("other_x"), DateTime.UtcNow);
+        Assert.Empty(Candidates());
+    }
+
     [Fact]
     public void Two_Store_packages_are_ordered_newest_first()
     {
