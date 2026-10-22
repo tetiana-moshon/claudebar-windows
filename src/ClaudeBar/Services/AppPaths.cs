@@ -54,26 +54,36 @@ public static class AppPaths
     /// installer build to the Store build keeps a frozen %APPDATA%\Claude behind, so neither location
     /// gets priority: keep every folder holding both the cache and its key, ordered by the newest
     /// <c>config.json</c> — the desktop app rewrites it on each token refresh, so the live install
-    /// leads. Split out with explicit roots so the selection is testable.
+    /// leads. Store build 3.1623 moved its user data out of the virtualized folder into
+    /// %LOCALAPPDATA%\Claude-Data\claude_&lt;publisher id&gt;, leaving only a
+    /// <c>.user-data-left.*</c> marker behind, so that root is scanned as well. Split out with
+    /// explicit roots so the selection is testable.
     /// </summary>
     internal static IReadOnlyList<string> DesktopDirCandidates(string appDataDir, string localAppDataDir)
     {
         var dirs = new List<string> { Path.Combine(appDataDir, "Claude") };
-        try
-        {
-            dirs.AddRange(Directory.EnumerateDirectories(Path.Combine(localAppDataDir, "Packages"), "Claude_*")
-                .Select(p => Path.Combine(p, "LocalCache", "Roaming", "Claude")));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // No Packages folder (or no access to it): only the installer location is left.
-        }
+        dirs.AddRange(SubdirsOrEmpty(Path.Combine(localAppDataDir, "Packages"), "Claude_*")
+            .Select(p => Path.Combine(p, "LocalCache", "Roaming", "Claude")));
+        dirs.AddRange(SubdirsOrEmpty(Path.Combine(localAppDataDir, "Claude-Data"), "claude_*"));
 
         return dirs
             .Where(d => File.Exists(Path.Combine(d, DesktopConfigFileName)) &&
                         File.Exists(Path.Combine(d, DesktopLocalStateFileName)))
             .OrderByDescending(d => File.GetLastWriteTimeUtc(Path.Combine(d, DesktopConfigFileName)))
             .ToArray();
+    }
+
+    private static IEnumerable<string> SubdirsOrEmpty(string root, string pattern)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(root, pattern).ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Root missing (or no access to it): that install kind is simply absent.
+            return [];
+        }
     }
 
     /// <summary>%APPDATA%\ClaudeBar — our own persisted data (usage history, etc.).</summary>
