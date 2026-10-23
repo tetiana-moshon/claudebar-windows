@@ -11,7 +11,10 @@
     <RootNamespace>ClaudeBar</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>1.1.1</Version>
+    <!-- Always the NEXT version with "-dev": every build between releases ranks below the release
+         that ships it, so the auto-updater replaces it. Only `publish.ps1 -Version X.Y.Z` stamps a
+         release number; bump this to the following "-dev" right after tagging. -->
+    <Version>1.1.2-dev</Version>
     <!-- Self-contained single-file packaging is applied only at publish time (see publish.ps1,
          which passes -r/-p:PublishSingleFile). Keeping it out of the plain build avoids the
          single-file apphost self-extract/relaunch behavior during development. -->

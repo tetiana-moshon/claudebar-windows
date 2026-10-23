@@ -24,6 +24,15 @@ skip this step — the tray app must be running to verify that a change works.
 - `Views/` — `TrayIconManager` (tray + dynamic icon), `MenuWindow` (popover), `StatisticsWindow`
   (hand-drawn charts), `UiTheme`.
 
+## Versions and releases
+
+- `<Version>` in the `.csproj` is always the next version with `-dev` (e.g. `1.1.2-dev`). Never
+  set it to a bare release number in a feature PR: the auto-updater compares numbers only, so any
+  earlier build carrying that number would never be replaced by the real release.
+- Release: `./publish.ps1 -Version X.Y.Z` on `main`, then tag `vX.Y.Z` with that zip as the asset,
+  then bump the `.csproj` to the following `-dev`.
+- The installed copy (`%LOCALAPPDATA%\Programs\ClaudeBar`) takes only zips from GitHub releases.
+
 ## Gotchas
 
 - WinForms global usings (`System.Drawing`, `System.Windows.Forms`) are removed in the `.csproj`

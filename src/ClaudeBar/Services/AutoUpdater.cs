@@ -491,10 +491,18 @@ public sealed class AutoUpdater : INotifyPropertyChanged
 
     // MARK: - Version comparison
 
+    /// <summary>
+    /// Semver precedence for what the updater needs: numeric core first, then a pre-release
+    /// (<c>1.1.2-dev</c>, a build between releases) ranks below the release of the same number, so
+    /// a dev build is always replaced once that release ships. Two pre-releases never update each
+    /// other; <c>+build</c> metadata is ignored.
+    /// </summary>
     public static bool IsNewer(string remote, string local)
     {
-        var r = remote.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
-        var l = local.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
+        var (rCore, rPre) = SplitPreRelease(remote);
+        var (lCore, lPre) = SplitPreRelease(local);
+        var r = rCore.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
+        var l = lCore.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
         for (var i = 0; i < Math.Max(r.Length, l.Length); i++)
         {
             var rv = i < r.Length ? r[i] : 0;
@@ -502,7 +510,14 @@ public sealed class AutoUpdater : INotifyPropertyChanged
             if (rv > lv) return true;
             if (rv < lv) return false;
         }
-        return false;
+        return rPre is null && lPre is not null;
+    }
+
+    private static (string core, string? preRelease) SplitPreRelease(string version)
+    {
+        var v = version.Split('+')[0];
+        var dash = v.IndexOf('-');
+        return dash < 0 ? (v, null) : (v[..dash], v[(dash + 1)..]);
     }
 
     // MARK: - Helpers
