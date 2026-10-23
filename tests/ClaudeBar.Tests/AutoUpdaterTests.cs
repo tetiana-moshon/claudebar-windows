@@ -115,6 +115,19 @@ public class AutoUpdaterTests
     public void IsNewer_compares_semver_numerically(string remote, string local, bool expected) =>
         Assert.Equal(expected, AutoUpdater.IsNewer(remote, local));
 
+    // A build between releases carries "-dev"; the release of that number must replace it. Without
+    // this, a branch build installed as 1.1.1 never took the real 1.1.1 with the fix in it.
+    [Theory]
+    [InlineData("1.1.2", "1.1.2-dev", true)]        // the release replaces its own dev build
+    [InlineData("1.1.2", "1.1.2-dev+abc123", true)] // build metadata ignored
+    [InlineData("1.1.3", "1.1.2-dev", true)]
+    [InlineData("1.1.1", "1.1.2-dev", false)]       // an older release never downgrades a dev build
+    [InlineData("1.1.2-dev", "1.1.2", false)]       // a pre-release never replaces its release
+    [InlineData("1.1.2-rc", "1.1.2-dev", false)]    // pre-releases don't update each other
+    [InlineData("1.1.2", "1.1.2+abc123", false)]    // same release, only metadata differs
+    public void IsNewer_ranks_a_pre_release_below_its_release(string remote, string local, bool expected) =>
+        Assert.Equal(expected, AutoUpdater.IsNewer(remote, local));
+
     private static (string path, string sha256Hex) WriteTempWithSha(string content)
     {
         var path = Path.Combine(Path.GetTempPath(), $"claudebar-test-{Guid.NewGuid():N}.bin");

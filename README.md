@@ -49,6 +49,9 @@ For a standalone, self-contained `.exe` you can copy to another machine, use `./
 # The exe is at publish\ClaudeBar.exe — copy it wherever you like and run it.
 ```
 
+A build from source carries an `X.Y.Z-dev` version, so the auto-updater replaces it with the
+`X.Y.Z` release once that ships. Release builds are stamped with `./publish.ps1 -Version X.Y.Z`.
+
 For development:
 
 ```powershell
